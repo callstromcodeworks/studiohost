@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Host setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../common/ui.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<main class="wizard">
+  <header class="wiz-head">
+    <img src="/favicon.svg" alt="" width="28" height="28">
+    <h1>Set up how guests reach your studio</h1>
+  </header>
+
+  <!-- Step: choose a method -->
+  <section id="choose" class="screen">
+    <p class="lead">Guests join from a link in their browser. Studio Host needs a way for that link to reach this computer.</p>
+    <div class="methods" role="radiogroup" aria-label="Setup method">
+      <label class="method">
+        <input type="radio" name="mode" value="auto" checked>
+        <span class="method-body">
+          <span class="method-title">Automatic <span class="tag">Recommended</span></span>
+          <span class="method-text">Studio Host opens a port on your router, gives your studio its own web address and gets a security certificate for it. Nothing to configure.</span>
+          <span class="method-needs">Needs a router with UPnP or NAT-PMP turned on (most home routers have it on).</span>
+        </span>
+      </label>
+      <label class="method">
+        <input type="radio" name="mode" value="manual">
+        <span class="method-body">
+          <span class="method-title">Manual <span class="tag quiet">Advanced users</span></span>
+          <span class="method-text">Use your own domain or IP address, port and certificate, or keep Studio Host on your local network only.</span>
+          <span class="method-needs">For when you manage port forwarding, DNS or certificates yourself.</span>
+        </span>
+      </label>
+    </div>
+    <div class="actions"><span class="grow"></span><button class="btn primary big" id="choose-next">Continue</button></div>
+  </section>
+
+  <!-- Step: manual settings -->
+  <section id="manual" class="screen hidden">
+    <form id="manual-form" class="form" novalidate>
+      <fieldset>
+        <legend>Address guests use</legend>
+        <div class="choice-row">
+          <label class="pick"><input type="radio" name="address" value="domain" checked> A domain or public IP</label>
+          <label class="pick"><input type="radio" name="address" value="lan"> This local network only</label>
+        </div>
+        <label class="field" id="host-field">Domain or public IP address
+          <input type="text" id="m-host" placeholder="studio.example.com" autocomplete="off" spellcheck="false">
+          <span class="hint">Point its DNS record at your public IP yourself.</span>
+        </label>
+        <p class="hint hidden" id="lan-note">Only devices on the same network as this computer can join. Use this for testing or an in-building show.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Port</legend>
+        <div class="two">
+          <label class="field">Guest port
+            <input type="number" id="m-port" min="1" max="65535" value="8731">
+            <span class="hint">Forward this TCP port to this computer.</span>
+          </label>
+          <label class="field">Listen on address
+            <input type="text" id="m-bind" value="0.0.0.0" spellcheck="false">
+            <span class="hint">0.0.0.0 means every network interface.</span>
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="m-upnp"> Open the port on my router with UPnP</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Security certificate</legend>
+        <label class="pick block" id="cert-le"><input type="radio" name="cert" value="letsencrypt"> Let’s Encrypt for my domain
+          <span class="hint">Free and trusted by every browser. Let’s Encrypt connects to your domain on port 80 to check it’s yours.</span></label>
+        <div class="sub" id="le-fields">
+          <div class="two">
+            <label class="field">Port 80 forwards to local port
+              <input type="number" id="m-acme-port" min="1" max="65535" value="80">
+            </label>
+            <label class="field">Email for expiry notices (optional)
+              <input type="email" id="m-email" autocomplete="email">
+            </label>
+          </div>
+        </div>
+        <label class="pick block"><input type="radio" name="cert" value="files"> My own certificate files</label>
+        <div class="sub" id="file-fields">
+          <label class="field">Certificate (PEM, full chain)<input type="text" id="m-cert" placeholder="/etc/letsencrypt/live/studio.example.com/fullchain.pem" spellcheck="false"></label>
+          <label class="field">Private key (PEM)<input type="text" id="m-key" placeholder="/etc/letsencrypt/live/studio.example.com/privkey.pem" spellcheck="false"></label>
+        </div>
+        <label class="pick block"><input type="radio" name="cert" value="self-signed" checked> Self-signed
+          <span class="hint">Works right away, but every guest has to click past a browser security warning.</span></label>
+      </fieldset>
+
+      <details class="more">
+        <summary>Connection extras</summary>
+        <label class="field">STUN/TURN servers (JSON)
+          <textarea id="m-ice" rows="4" spellcheck="false"></textarea>
+          <span class="hint">Add a TURN server if guests on strict networks get stuck connecting.</span>
+        </label>
+        <label class="field narrow">Max guests<input type="number" id="m-max" min="1" max="50"></label>
+      </details>
+
+      <div class="form-error hidden" id="manual-error" role="alert"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="manual-back">Back</button>
+        <span class="grow"></span>
+        <button class="btn primary big" id="manual-save">Save and start</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Step: progress (both modes) -->
+  <section id="progress" class="screen hidden">
+    <ol class="path" id="path" aria-live="polite"></ol>
+    <div class="result hidden" id="result">
+      <p class="result-label">Send guests this link</p>
+      <div class="invite">
+        <code id="invite"></code>
+        <button class="btn" id="copy">Copy link</button>
+      </div>
+      <p class="hint" id="result-note"></p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="progress-back">Change setup</button>
+      <button class="btn hidden" id="retry">Try again</button>
+      <span class="grow"></span>
+      <button class="btn primary big" id="finish" disabled>Finish</button>
+    </div>
+  </section>
+</main>
+<script type="module" src="setup.js"></script>
+</body>
+</html>

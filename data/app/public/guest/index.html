@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Join the studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../common/ui.css">
+<link rel="stylesheet" href="guest.css">
+</head>
+<body>
+<!-- Green room: check camera/mic and enter a name -->
+<main id="lobby" class="lobby">
+  <div class="lobby-card card">
+    <h1>Join the studio</h1>
+    <p class="muted" id="lobby-sub">Check your camera and microphone, then join. You'll wait backstage until the host brings you on.</p>
+    <div class="preview-wrap">
+      <video id="lobby-video" autoplay playsinline muted></video>
+      <div class="preview-off hidden" id="lobby-off">Camera off</div>
+      <div class="meter"><div id="lobby-meter"></div></div>
+    </div>
+    <div class="row">
+      <button class="btn icon on" id="lobby-mic" title="Microphone"></button>
+      <button class="btn icon on" id="lobby-cam" title="Camera"></button>
+      <span class="grow"></span>
+    </div>
+    <label class="field">Camera<select id="cam-select"></select></label>
+    <label class="field">Microphone<select id="mic-select"></select></label>
+    <label class="field">Your name (shown on screen)<input type="text" id="name" maxlength="40" autocomplete="name" placeholder="Your name"></label>
+    <div id="lobby-error" class="error-box hidden"></div>
+    <button class="btn primary big" id="join">Join studio</button>
+  </div>
+</main>
+
+<!-- In the studio -->
+<main id="studio" class="studio hidden">
+  <header class="topbar">
+    <strong>Studio</strong>
+    <span id="stage-status" class="pill">Backstage</span>
+    <span id="conn-status" class="pill hidden"></span>
+    <span class="grow"></span>
+  </header>
+  <section class="program">
+    <div class="program-frame">
+      <video id="program" autoplay playsinline></video>
+      <div class="program-empty" id="program-empty">Waiting for the studio…</div>
+      <div class="program-label">What viewers see</div>
+    </div>
+    <div class="self card">
+      <video id="self-video" autoplay playsinline muted></video>
+      <div class="self-name" id="self-name"></div>
+    </div>
+  </section>
+  <aside class="chat card hidden" id="chat">
+    <div class="row chat-head"><h2 class="grow">Private chat</h2><button class="btn icon small" id="chat-close" title="Close"></button></div>
+    <div class="chat-log" id="chat-log"></div>
+    <form class="chat-form" id="chat-form">
+      <select id="chat-to"><option value="">Everyone in studio</option><option value="host">Host only</option></select>
+      <div class="row"><input type="text" id="chat-input" maxlength="1000" placeholder="Message (not shown on stream)" autocomplete="off"><button class="btn primary">Send</button></div>
+    </form>
+  </aside>
+  <footer class="controls">
+    <button class="btn ctl" id="mic"></button>
+    <button class="btn ctl" id="cam"></button>
+    <button class="btn ctl" id="share"></button>
+    <button class="btn ctl" id="chat-btn"></button>
+    <button class="btn ctl" id="settings-btn"></button>
+    <button class="btn ctl danger" id="leave"></button>
+  </footer>
+  <dialog id="settings" class="card">
+    <form method="dialog" class="stack">
+      <h1>Settings</h1>
+      <label class="field">Camera<select id="cam-select-2"></select></label>
+      <label class="field">Microphone<select id="mic-select-2"></select></label>
+      <label class="field">Speaker<select id="spk-select"></select></label>
+      <label class="field">Display name<input type="text" id="name-2" maxlength="40"></label>
+      <div class="row"><span class="grow"></span><button class="btn primary">Done</button></div>
+    </form>
+  </dialog>
+</main>
+
+<main id="ended" class="lobby hidden">
+  <div class="lobby-card card"><h1 id="ended-title">You left the studio</h1><p class="muted" id="ended-text">Thanks for joining.</p>
+    <button class="btn primary" onclick="location.reload()">Rejoin</button></div>
+</main>
+<script type="module" src="guest.js"></script>
+</body>
+</html>

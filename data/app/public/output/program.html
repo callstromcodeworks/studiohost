@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Host – Program</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+  #notice {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    font: 500 28px Roboto, system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.75);
+    padding: 18px 26px; border-radius: 12px; display: none; text-align: center; max-width: 80vw;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="notice"></div>
+<script type="module" src="program.js"></script>
+</body>
+</html>

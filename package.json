@@ -1,0 +1,26 @@
+{
+  "name": "studiohost",
+  "version": "0.1.0",
+  "description": "Studio Host for OBS: a self-hosted, browser-based remote guest studio that feeds OBS through Browser Sources and a custom browser dock.",
+  "type": "module",
+  "private": true,
+  "main": "data/app/server/index.js",
+  "bin": {
+    "studiohost": "data/app/server/index.js"
+  },
+  "scripts": {
+    "start": "node data/app/server/index.js",
+    "setup-obs": "node data/app/server/index.js --setup-obs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "author": "Callstrom Code Works",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

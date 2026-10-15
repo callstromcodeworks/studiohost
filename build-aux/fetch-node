@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Downloads the Node.js runtime that Studio Host bundles into data/node/.
+#   build-aux/fetch-node linux-x64 | linux-arm64 | macos
+# "macos" produces a universal (arm64 + x86_64) binary with lipo.
+# The version comes from build-aux/node-version; downloads are verified against
+# the SHASUMS256.txt published alongside the release on nodejs.org.
+set -euo pipefail
+
+target="${1:?usage: fetch-node linux-x64|linux-arm64|macos}"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(tr -d '[:space:]' < "${root}/build-aux/node-version")"
+base="https://nodejs.org/dist/v${version}"
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+out="${root}/data/node"
+
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+
+curl -fsSL --retry 3 "${base}/SHASUMS256.txt" -o "${work}/SHASUMS256.txt"
+
+# fetch <platform> -> extracts node-v<version>-<platform>/ into ${work}
+fetch() {
+  local name="node-v${version}-$1.tar.gz"
+  curl -fsSL --retry 3 "${base}/${name}" -o "${work}/${name}"
+  local expected actual
+  expected="$(awk -v f="${name}" '$2 == f { print $1 }' "${work}/SHASUMS256.txt")"
+  actual="$(sha256 "${work}/${name}")"
+  if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
+    echo "Checksum mismatch for ${name}" >&2
+    exit 1
+  fi
+  tar -xzf "${work}/${name}" -C "${work}"
+}
+
+rm -rf "${out}"
+mkdir -p "${out}"
+case "${target}" in
+  linux-x64|linux-arm64)
+    fetch "${target}"
+    cp "${work}/node-v${version}-${target}/bin/node" "${out}/node"
+    cp "${work}/node-v${version}-${target}/LICENSE" "${out}/LICENSE"
+    ;;
+  macos)
+    fetch darwin-arm64
+    fetch darwin-x64
+    lipo -create \
+      "${work}/node-v${version}-darwin-arm64/bin/node" \
+      "${work}/node-v${version}-darwin-x64/bin/node" \
+      -output "${out}/node"
+    cp "${work}/node-v${version}-darwin-arm64/LICENSE" "${out}/LICENSE"
+    ;;
+  *)
+    echo "unknown target: ${target}" >&2
+    exit 1
+    ;;
+esac
+chmod 755 "${out}/node"
+echo "Node.js v${version} for ${target} -> ${out}"
+"${out}/node" --version || true

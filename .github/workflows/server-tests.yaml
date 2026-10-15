@@ -1,0 +1,33 @@
+name: Server Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    name: Server, network setup and wizard tests 🧪
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: build-aux/node-version
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - name: Build Pebble (test certificate authority)
+        run: .github/scripts/build-pebble "${RUNNER_TEMP}/pebble" >> "$GITHUB_ENV"
+      - name: Unit, API and network setup tests
+        run: npm test
+      - name: Browser tests (studio and setup wizard)
+        run: |
+          npm install --no-save --silent playwright@1
+          npx playwright install --with-deps chromium > /dev/null
+          status=0
+          for t in test/e2e.mjs test/wizard.e2e.mjs; do
+            node "$t" > out.log 2>&1 || status=1
+            cat out.log
+            # Surface failures as annotations (visible without the full log).
+            grep -E "^(FAIL|INFO)|PAGE ERROR|page error|Error:" out.log | head -30 | while IFS= read -r line; do echo "::error title=$t::${line:0:900}"; done
+          done
+          exit $status

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg">
+<title>Studio Host – Guest Screen Share</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; background: #000; }
+  video.show { display: block; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<script type="module" src="feature.js"></script>
+</body>
+</html>

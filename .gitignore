@@ -1,0 +1,16 @@
+# Build output
+/build_*/
+/release/
+/.ccache/
+/cmake/.CMakeBuildNumber
+*.lock.json
+
+# Bundled Node.js runtime (downloaded by build-aux/fetch-node at build time)
+/data/node/
+
+# Node / tests
+node_modules/
+test/screenshots/
+*.log
+
+.DS_Store

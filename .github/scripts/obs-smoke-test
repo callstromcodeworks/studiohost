@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Installs the freshly built plugin into a real OBS (from the obsproject PPA, installed by the
+# Ubuntu build), starts OBS under Xvfb, and runs test/obs-smoke.mjs against it.
+# Results and Studio Host log lines are reported as workflow annotations.
+set -uo pipefail
+# Report the failing command as an annotation (this script has no -e; it reports and carries on).
+set -E
+trap 'echo "::warning title=obs-smoke-test::command failed (line ${LINENO}): ${BASH_COMMAND}"' ERR
+
+config="${1:-RelWithDebInfo}"
+root="$(pwd)"
+release="${root}/release/${config}"
+so="$(find "${release}" -name studiohost.so | head -n 1)"
+data="$(find "${release}" -type d -path '*obs-plugins/studiohost' | head -n 1)"
+cfg="${HOME}/.config/obs-studio"
+
+annotate() { # annotate <level> <title> <file>
+  local body
+  body="$(sed -e 's/%/%25/g' -e 's/\r/%0D/g' "$3" | head -c 60000 | awk '{printf "%s%%0A", $0}')"
+  echo "::$1 title=$2::${body}"
+}
+
+if [[ -z "${so}" || -z "${data}" ]]; then
+  echo "::error::Built plugin not found under ${release}"
+  exit 1
+fi
+
+sudo apt-get install -y -qq xvfb > /dev/null
+
+mkdir -p "${cfg}/plugins/studiohost/bin/64bit" "${cfg}/plugin_config/obs-websocket"
+cp "${so}" "${cfg}/plugins/studiohost/bin/64bit/"
+cp -r "${data}" "${cfg}/plugins/studiohost/data"
+cat > "${cfg}/plugin_config/obs-websocket/config.json" <<'JSON'
+{"alerts_enabled": false, "auth_required": false, "first_load": false, "server_enabled": true, "server_password": "", "server_port": 4455}
+JSON
+printf '[General]\nFirstRun=false\nEnableAutoUpdates=false\nBrowserHWAccel=false\n' | tee "${cfg}/user.ini" > "${cfg}/global.ini"
+
+npm install --no-save --silent playwright@1 > /dev/null
+npx --yes playwright install --with-deps chromium > /dev/null 2>&1
+
+# Automatic setup runs for real against local stand-ins: a fake hostname service, Pebble
+# (Let's Encrypt's test CA, validating through that DNS) and a simulated UPnP router whose
+# "public" address is this machine.
+work="$(mktemp -d)"
+pebble_env="$(.github/scripts/build-pebble "${RUNNER_TEMP:-/tmp}/pebble" 2>pebble-build.log)" || { echo "::error title=obs-smoke-test::building Pebble failed: $(tail -c 800 pebble-build.log)"; exit 1; }
+eval "$(echo "${pebble_env}" | sed 's/^/export /')"
+FAKE_EXTERNAL_IP=127.0.0.1 node test/fake-router.mjs > "${work}/router.json" &
+for _ in $(seq 50); do [[ -s "${work}/router.json" ]] && break; sleep 0.1; done
+router_location="$(node -e "console.log(JSON.parse(require('fs').readFileSync('${work}/router.json','utf8')).location)")"
+ZONE=live.studiohost.test DNS_PORT=5399 DNS_HOST=127.0.0.1 API_PORT=8099 API_BIND=127.0.0.1 \
+  PROBE_CA_FILE="${work}/pebble-root.pem" \
+  node test/fake-hostname-service.mjs > dns-service.log 2>&1 &
+node -e "
+  const c = JSON.parse(require('fs').readFileSync(process.env.PEBBLE_DIR + '/test/config/pebble-config.json', 'utf8'));
+  Object.assign(c.pebble, { listenAddress: '127.0.0.1:14000', managementListenAddress: '127.0.0.1:15000',
+    certificate: process.env.PEBBLE_DIR + '/test/certs/localhost/cert.pem', privateKey: process.env.PEBBLE_DIR + '/test/certs/localhost/key.pem' });
+  require('fs').writeFileSync('${work}/pebble.json', JSON.stringify(c));"
+PEBBLE_VA_NOSLEEP=1 "${PEBBLE_BIN}" -config "${work}/pebble.json" -dnsserver 127.0.0.1:5399 > pebble.log 2>&1 &
+sleep 2
+curl -s --cacert "${PEBBLE_DIR}/test/certs/pebble.minica.pem" https://127.0.0.1:15000/roots/0 > "${work}/pebble-root.pem"
+export STUDIOHOST_DNS_SERVICE=http://127.0.0.1:8099
+export STUDIOHOST_ACME_DIRECTORY=https://127.0.0.1:14000/dir
+export STUDIOHOST_ACME_CA="${PEBBLE_DIR}/test/certs/pebble.minica.pem"
+export STUDIOHOST_UPNP_LOCATION="${router_location}"
+export STUDIOHOST_PROPAGATION_MS=0
+export SMOKE_ZONE=live.studiohost.test
+
+STUDIOHOST_DEBUG=1 xvfb-run -a -s "-screen 0 1920x1080x24" obs --disable-shutdown-check --minimize-to-tray > obs-stdout.log 2>&1 &
+obs_pid=$!
+
+STUDIOHOST_CONFIG_DIR="${cfg}/plugin_config/studiohost" \
+PLAYWRIGHT_MODULE="${root}/node_modules/playwright" \
+  timeout 600 node test/obs-smoke.mjs > smoke.log 2>&1
+status=$?
+
+# The setup wizard should have opened by itself on this first run.
+sudo apt-get install -y -qq x11-utils > /dev/null 2>&1 || true
+display="$(pgrep -a Xvfb | grep -o ' :[0-9]*' | head -n 1 | tr -d ' ')"
+if [[ -n "${display}" ]]; then DISPLAY="${display}" xwininfo -root -tree 2>/dev/null | grep -E '"[^"]+"' | head -n 40 > x-windows.txt || true; fi
+if grep -hq 'setup wizard shown (visible: yes)' "${cfg}"/logs/*.txt 2>/dev/null; then
+  echo "PASS  the setup wizard window opened by itself on first run" >> smoke.log
+else
+  echo "FAIL  the setup wizard window did not open on first run" >> smoke.log
+  { echo '--- wizard log lines'; grep -hi 'wizard\|setup needed' "${cfg}"/logs/*.txt 2>/dev/null; echo '--- X windows'; cat x-windows.txt 2>/dev/null; } >> smoke.log
+  status=1
+fi
+
+# Snapshot what every OBS thread is doing (helps diagnose stalls), then stop OBS.
+sudo apt-get install -y -qq gdb > /dev/null 2>&1 || true
+obs_real_pid="$(pgrep -x obs | head -n 1)"
+if [[ -n "${obs_real_pid}" ]]; then
+  sudo timeout 120 gdb -p "${obs_real_pid}" -batch -ex "set pagination off" -ex "thread apply all bt 12" > obs-threads.txt 2>&1 || true
+  # Keep the threads that are inside Studio Host, Qt's event loop or waiting on something.
+  awk '/^Thread /{t=$0; n=0} { if (n < 14) print; n++ }' obs-threads.txt | head -c 55000 > obs-threads-short.txt
+fi
+pkill -INT -x obs || true
+sleep 5
+kill "${obs_pid}" 2>/dev/null || true
+
+cat smoke.log
+grep -hiE "studiohost|\[server\]|browser|error" "${cfg}"/logs/*.txt 2>/dev/null | tail -n 300 > obs-log-excerpt.txt || true
+tail -n 40 obs-stdout.log >> obs-log-excerpt.txt
+{ echo '--- dns service'; tail -n 30 dns-service.log; echo '--- pebble'; tail -n 30 pebble.log; } >> obs-log-excerpt.txt
+pkill -f "fake-hostname-service.mjs" || true; pkill -f "fake-router.mjs" || true; pkill -f "bin/pebble" || true
+
+[[ -f obs-threads-short.txt ]] && annotate warning "OBS thread backtraces" obs-threads-short.txt
+if (( status == 0 )); then
+  annotate notice "OBS smoke test passed" smoke.log
+  annotate notice "OBS log (Studio Host lines)" obs-log-excerpt.txt
+else
+  # Annotations hold about 4 KB, so put the failures (and what follows them) in one of their own.
+  { grep -E '^(FAIL|Error|  at )' smoke.log; echo '--- end of report'; tail -n 25 smoke.log; } | head -c 4000 > smoke-failures.txt
+  annotate error "OBS smoke test failures" smoke-failures.txt
+  annotate error "OBS smoke test failed" smoke.log
+  annotate error "OBS log (Studio Host lines)" obs-log-excerpt.txt
+  # Annotations are cut to about 4 KB; the job log keeps the whole excerpt.
+  echo '--- OBS log (Studio Host lines)'; cat obs-log-excerpt.txt
+fi
+# The screen share output's link setup has been slow on CI; keep its timeline in the job log.
+echo '--- screen share output page'; grep -hiE "page feature|link feature" "${cfg}"/logs/*.txt 2>/dev/null | tail -n 60
+exit "${status}"

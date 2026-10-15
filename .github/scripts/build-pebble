@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Builds Pebble (Let's Encrypt's test CA) for the network-setup tests.
+# Usage: .github/scripts/build-pebble <dir>   -> <dir>/bin/pebble, test configs in <dir>/test
+set -euo pipefail
+dir="${1:?usage: build-pebble <dir>}"
+version="v2.7.0"
+if [[ ! -x "${dir}/bin/pebble" ]]; then
+  git clone -q --depth 1 --branch "${version}" https://github.com/letsencrypt/pebble.git "${dir}"
+  (cd "${dir}" && GOFLAGS=-mod=vendor go build -o bin/pebble ./cmd/pebble)
+fi
+echo "PEBBLE_BIN=${dir}/bin/pebble"
+echo "PEBBLE_DIR=${dir}"

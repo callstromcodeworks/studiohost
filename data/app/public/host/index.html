@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Host</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../common/ui.css">
+<link rel="stylesheet" href="host.css">
+</head>
+<body>
+<div id="app" class="app">
+  <header class="topbar">
+    <strong class="brand">Studio Host</strong>
+    <span id="program-status" class="pill">Program offline</span>
+    <span class="grow"></span>
+    <button class="btn small primary" id="copy-invite" title="Copy the guest invite link">Invite link</button>
+  </header>
+
+  <div class="layout">
+    <section class="col-main">
+      <div class="preview card">
+        <canvas id="preview" width="640" height="360"></canvas>
+        <div class="preview-tag">Stage preview</div>
+      </div>
+      <div class="obs-bar card hidden" id="obs-bar">
+        <div class="row">
+          <h2 class="grow">OBS scene</h2>
+          <span class="pill live hidden" id="obs-live"><span class="dot"></span>LIVE</span>
+          <span class="pill live hidden" id="obs-rec"><span class="dot"></span>REC</span>
+        </div>
+        <div class="row wrap" id="obs-scenes"></div>
+        <div class="muted small" id="obs-scene-hint"></div>
+      </div>
+      <div class="content-bar card">
+        <label class="field">Content<select id="content-select"></select></label>
+        <div class="muted small" id="content-hint"></div>
+      </div>
+      <div class="layouts" id="layouts"></div>
+
+      <div class="section">
+        <div class="row"><h2 class="grow">On stage</h2><span class="muted small" id="stage-count"></span></div>
+        <div class="people" id="on-stage"></div>
+      </div>
+      <div class="section">
+        <div class="row"><h2 class="grow">Backstage</h2><span class="muted small" id="back-count"></span></div>
+        <div class="people" id="backstage"></div>
+        <p class="muted empty-hint" id="no-guests">No guests yet. Send the invite link to bring people into the studio.</p>
+      </div>
+    </section>
+
+    <section class="col-side card">
+      <nav class="tabs" id="tabs">
+        <button data-tab="chat" class="active">Chat <span class="badge hidden" id="chat-badge"></span></button>
+        <button data-tab="banners">Banners</button>
+        <button data-tab="brand">Brand</button>
+        <button data-tab="media">Media</button>
+        <button data-tab="setup">Setup</button>
+      </nav>
+
+      <div class="tab chat-tab" data-tab="chat">
+        <div class="chat-log" id="chat-log"></div>
+        <form id="chat-form" class="stack chat-form">
+          <select id="chat-to"></select>
+          <div class="row"><input type="text" id="chat-input" maxlength="1000" placeholder="Message guests (not shown on stream)" autocomplete="off"><button class="btn primary">Send</button></div>
+        </form>
+      </div>
+
+      <div class="tab hidden" data-tab="banners">
+        <form id="banner-form" class="stack">
+          <textarea id="banner-text" maxlength="300" placeholder="Banner text, e.g. a topic, a call to action, or a link"></textarea>
+          <div class="row"><label class="check"><input type="checkbox" id="banner-ticker"> Scrolling ticker</label><span class="grow"></span><button class="btn primary small">Add banner</button></div>
+        </form>
+        <div id="banner-list" class="list"></div>
+        <label class="field">Banner position
+          <select id="banner-pos"><option value="bottom-left">Bottom left</option><option value="bottom-center">Bottom center</option><option value="bottom-right">Bottom right</option><option value="top-left">Top left</option><option value="top-center">Top center</option><option value="top-right">Top right</option></select>
+        </label>
+        <label class="field">Ticker speed
+          <div class="row"><span class="muted small">Slow</span><input type="range" id="ticker-speed" class="grow" min="40" max="600" step="10"><span class="muted small">Fast</span></div>
+        </label>
+        <label class="check"><input type="checkbox" id="ticker-repeat"> Repeat ticker text (off: one copy on screen at a time)</label>
+      </div>
+
+      <div class="tab hidden" data-tab="brand">
+        <div class="stack">
+          <div class="row wrap gap-lg">
+            <label class="field">Brand color<input type="color" id="b-color"></label>
+            <label class="field">Text color<input type="color" id="b-text"></label>
+            <label class="field">Background<input type="color" id="b-bg"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="b-names"> Show display names</label>
+          <label class="field">Name style
+            <select id="b-style"><option value="bubble">Bubble</option><option value="block">Block</option><option value="minimal">Minimal</option><option value="outline">Outline</option><option value="accent">Accent bar</option><option value="none">Hidden</option></select>
+          </label>
+          <label class="field">Font (any installed or Google font name)<input type="text" id="b-font" maxlength="60"></label>
+          <label class="field">Logo<select id="b-logo"></select></label>
+          <label class="field">Logo position
+            <select id="b-logopos"><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select>
+          </label>
+          <label class="field">Background image<select id="b-bgimg"></select></label>
+          <label class="field">Overlay (full-frame PNG with transparency)<select id="b-overlay"></select></label>
+          <p class="muted small">Upload images in the Media tab.</p>
+        </div>
+      </div>
+
+      <div class="tab hidden" data-tab="media">
+        <div class="stack">
+          <label class="btn primary small upload-btn">Upload image<input type="file" id="upload" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/quicktime" multiple hidden></label>
+          <div id="upload-progress" class="muted small hidden"></div>
+          <div id="clip-now" class="now-playing hidden"></div>
+          <div id="asset-list" class="list"></div>
+          <h3 class="section-title">Alerts &amp; widgets</h3>
+          <p class="muted small">Paste a widget link from Streamlabs, StreamElements or a similar service (alert box, goal, event list). Studio Host adds it to the Studio Host: Studio scene in OBS as a Browser Source, on top of the stage.</p>
+          <form id="widget-form" class="stack">
+            <input type="text" id="widget-name" maxlength="60" placeholder="Name, e.g. Alerts" autocomplete="off">
+            <div class="row"><input type="url" id="widget-url" class="grow" maxlength="2000" placeholder="https://streamlabs.com/alert-box/v3/…" autocomplete="off"><button class="btn primary small">Add</button></div>
+          </form>
+          <div id="widget-list" class="list"></div>
+        </div>
+      </div>
+
+      <div class="tab hidden" data-tab="setup">
+        <div class="stack" id="setup"></div>
+      </div>
+    </section>
+  </div>
+</div>
+<div id="fatal" class="fatal hidden"></div>
+<script type="module" src="host.js"></script>
+</body>
+</html>
