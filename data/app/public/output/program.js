@@ -24,6 +24,25 @@ const mixer = new AudioMixer();
 /** @type {HTMLVideoElement|null} */ let clipEl = null;
 /** @type {string|null} */ let clipKey = null;
 
+/**
+ * The browser's H.264 codecs first, when it reports a power-efficient (hardware) H.264 encoder
+ * at this size; otherwise null.
+ * @param {number} width @param {number} height @returns {Promise<RTCRtpCodec[]|null>}
+ */
+async function hardwareH264Codecs(width, height) {
+  try {
+    const info = await navigator.mediaCapabilities.encodingInfo({
+      type: 'webrtc', video: { contentType: 'video/H264', width, height, bitrate: 3_000_000, framerate: 30 },
+    });
+    if (!info.supported || !info.powerEfficient) return null;
+    const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
+    const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+    return h264.length ? [...h264, ...codecs.filter((c) => !h264.includes(c))] : null;
+  } catch {
+    return null;
+  }
+}
+
 function say(text) { notice.textContent = text; notice.style.display = text ? 'block' : 'none'; }
 
 // OBS-source content is left as a transparent hole: the plugin draws that source beneath this page.
@@ -92,6 +111,11 @@ async function main() {
     }
   };
   /** @type {any} */ (window).studioHost.guestCanvas = guestCanvas;
+  // When this machine can encode H.264 in hardware, guests' copies prefer it so Chromium uses the
+  // GPU's encoder; otherwise the browser's default codec (normally VP8, encoded in software).
+  const feedCodecs = await hardwareH264Codecs(guestCanvas.width, guestCanvas.height);
+  console.warn(`[program] guest feed codec: ${feedCodecs ? 'H.264 (hardware encoder available)' : 'browser default (no hardware H.264 encoder found)'}`);
+
   const programStream = guestCanvas.captureStream(fps);
   const programVideo = programStream.getVideoTracks()[0];
 
@@ -127,7 +151,7 @@ async function main() {
     if (link.purpose !== 'program') return;
     bank.watch(link);
     const out = new MediaStream();
-    link.setTrack('program-video', programVideo, out, { ...feedEncoding(), maxFramerate: Math.min(fps, 30) })
+    link.setTrack('program-video', programVideo, out, { ...feedEncoding(), maxFramerate: Math.min(fps, 30) }, feedCodecs)
       .then(rebalanceFeed);
     const mm = mixer.mixMinusFor(link.peer).getAudioTracks()[0];
     // Audio goes first when a guest's connection is congested.
@@ -157,7 +181,15 @@ async function main() {
       l.audioKbps = p && secs > 0 ? Math.max(0, Math.round(((l.audioBytesIn - p.audioBytesIn) * 8) / 1000 / secs)) : null;
       l.audioLevel = Math.round(mixer.takePeak(l.peer) * 1000) / 1000;
       l.audioActive = l.audioLevel > 0.002 || (p ? l.audioEnergy > p.audioEnergy : false);
-      prev.set(l.peer, { at: now, videoBytesIn: l.videoBytesIn, audioBytesIn: l.audioBytesIn, audioEnergy: l.audioEnergy });
+      // Log the codec (and, where the browser reveals it, the encoder) each guest's copy uses, on
+      // the first reading and when it changes. Chromium only names the encoder to pages that
+      // capture a camera or microphone, so inside OBS it usually shows as unknown.
+      const sent = l.sent?.codec ? `${l.sent.codec} via ${l.sent.encoder || 'unknown encoder'}${l.sent.hardware === true ? ' (hardware)' : l.sent.hardware === false ? ' (software)' : ''}` : p?.sent;
+      prev.set(l.peer, { at: now, videoBytesIn: l.videoBytesIn, audioBytesIn: l.audioBytesIn, audioEnergy: l.audioEnergy, sent });
+      if (sent && sent !== p?.sent) {
+        const name = client.state?.participants.find((x) => x.id === l.peer)?.name || l.peer.slice(0, 8);
+        console.warn(`[guest ${name}] program video: ${sent}`);
+      }
     }
     client.post('diag', { links: list }).catch(() => {});
     rebalanceFeed();
