@@ -83,7 +83,7 @@ function links() {
 
 /** Studio settings that apply to both setup modes (no restart needed). */
 function configView() {
-  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort };
+  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort, guestFeed: config.guestFeed };
 }
 
 /** @param {any} body @returns {string} */
@@ -101,6 +101,12 @@ function configSave(body) {
     }
     patch.iceServers = list;
   }
+  if ('guestFeed' in body) {
+    const maxKbps = Number(body.guestFeed?.maxKbps), totalKbps = Number(body.guestFeed?.totalKbps);
+    if (!Number.isInteger(maxKbps) || maxKbps < 300 || maxKbps > 20000) throw new Error('Program video per guest must be between 300 and 20000 kbps.');
+    if (!Number.isInteger(totalKbps) || totalKbps < 300 || totalKbps > 200000) throw new Error('Program video for all guests must be between 300 and 200000 kbps.');
+    patch.guestFeed = { maxKbps, totalKbps };
+  }
   let restart = false;
   if ('localPort' in body) {
     const n = Number(body.localPort);
@@ -109,6 +115,7 @@ function configSave(body) {
   }
   saveConfigPatch(patch);
   Object.assign(config, restart ? { ...patch, localPort: config.localPort } : patch);
+  if (patch.guestFeed) studio.broadcast({ type: 'guest-feed', guestFeed: patch.guestFeed }, (c) => c.role === 'program');
   if (restart && channel) {
     setTimeout(() => channel.send({ type: 'restart' }), 300);
     return 'Saved. Studio Host is restarting to use the new local port.';

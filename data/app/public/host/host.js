@@ -443,26 +443,33 @@ function networkSummary() {
   return box;
 }
 
-/** STUN/TURN servers and max guests (apply to both setup modes; no restart). */
+/** STUN/TURN servers, max guests and program video caps (apply to both setup modes; no restart). */
 function settingsForm() {
   const box = h('div.stack', null, h('p.muted.small', null, 'Loading settings…'));
   client.post('config-get').then((cfg) => {
     const f = (/** @type {string} */ label, /** @type {HTMLElement} */ input, /** @type {string} */ hint = '') =>
       h('label.field', null, label, input, hint ? h('span.muted.small', null, hint) : null);
     const maxGuests = h('input', { type: 'number', min: '1', max: '50', value: String(cfg.maxGuests) });
+    const feedEach = h('input', { type: 'number', min: '300', max: '20000', step: '100', value: String(cfg.guestFeed.maxKbps) });
+    const feedTotal = h('input', { type: 'number', min: '300', max: '200000', step: '100', value: String(cfg.guestFeed.totalKbps) });
     const ice = h('textarea', { rows: 5, spellcheck: false }, JSON.stringify(cfg.iceServers, null, 2));
     const save = h('button.btn.primary', { type: 'button' }, 'Save');
     save.addEventListener('click', async () => {
       let iceServers;
       try { iceServers = JSON.parse(ice.value); } catch { toast('STUN/TURN servers must be valid JSON.', { error: true }); return; }
       save.disabled = true;
-      try { toast((await client.post('config-save', { maxGuests: Number(maxGuests.value), iceServers })).message); }
+      try { toast((await client.post('config-save', {
+        maxGuests: Number(maxGuests.value), iceServers,
+        guestFeed: { maxKbps: Number(feedEach.value), totalKbps: Number(feedTotal.value) },
+      })).message); }
       catch (e) { toast(e.message, { error: true, ms: 8000 }); }
       save.disabled = false;
     });
     box.replaceChildren(
       f('STUN/TURN servers (JSON)', ice, 'Add a TURN server if guests on strict networks get stuck connecting.'),
       f('Max guests', maxGuests),
+      f('Program video per guest (kbps)', feedEach, 'The most any one guest receives. Guests on slower connections get less automatically.'),
+      f('Program video for all guests (kbps)', feedTotal, 'Shared by everyone connected. Keep it well under your upload speed minus your stream bitrate.'),
       h('div.row', null, h('span.grow'), save),
     );
   }).catch((e) => box.replaceChildren(h('p.muted.small', null, e.message)));

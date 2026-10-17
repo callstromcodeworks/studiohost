@@ -35,6 +35,29 @@ function welcome(base, session) {
     ws.onerror = () => { clearTimeout(timer); reject(new Error('websocket error')); };
   });
 }
+/** Opens the page event channel; next(pred) resolves with the first matching message after welcome. */
+function openWs(session) {
+  const ws = new WebSocket(`ws://127.0.0.1:${LOCAL}/api/ws?id=${session.id}&token=${session.token}`);
+  const seen = [];
+  /** @type {{pred: (m: any) => boolean, resolve: (m: any) => void}[]} */ const wait = [];
+  const opened = new Promise((resolve) => {
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'welcome') resolve(undefined);
+      const i = wait.findIndex((w) => w.pred(m));
+      if (i >= 0) wait.splice(i, 1)[0].resolve(m); else seen.push(m);
+    };
+  });
+  return opened.then(() => ({
+    next: (pred, ms = 5000) => new Promise((resolve, reject) => {
+      const hit = seen.find(pred);
+      if (hit) return resolve(hit);
+      const timer = setTimeout(() => reject(new Error('no matching message')), ms);
+      wait.push({ pred, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+    }),
+    close: () => ws.close(),
+  }));
+}
 async function post(route, body, session) {
   const headers = { 'Content-Type': 'application/json' };
   if (session) { headers['X-Client-Id'] = session.id; headers['X-Client-Token'] = session.token; }
@@ -114,6 +137,16 @@ test('studio settings save without a restart; a new local port asks for one', as
   assert.equal(cfg.iceServers[0].urls, 'stun:stun.example.org:3478');
   // New joins get the new STUN/TURN list straight away.
   assert.equal((await post('join', { role: 'host' })).body.iceServers[0].urls, 'stun:stun.example.org:3478');
+  // Program video caps are validated, saved, handed to new joins and pushed to the program page.
+  assert.equal((await post('config-save', { guestFeed: { maxKbps: 50, totalKbps: 12000 } }, host)).status, 400);
+  const program = (await post('join', { role: 'program' })).body;
+  assert.deepEqual(program.guestFeed, { maxKbps: 3000, totalKbps: 12000 });
+  const programWs = await openWs(program);
+  assert.equal((await post('config-save', { guestFeed: { maxKbps: 2500, totalKbps: 8000 } }, host)).status, 200);
+  assert.deepEqual((await programWs.next((m) => m.type === 'guest-feed')).guestFeed, { maxKbps: 2500, totalKbps: 8000 });
+  programWs.close();
+  assert.deepEqual(JSON.parse(readFileSync(join(data, 'config.json'), 'utf8')).guestFeed, { maxKbps: 2500, totalKbps: 8000 });
+  assert.deepEqual((await post('join', { role: 'program' })).body.guestFeed, { maxKbps: 2500, totalKbps: 8000 });
   assert.equal((await post('config-save', { localPort: LOCAL + 7 }, host)).status, 200);
   await nextMessage((m) => m.type === 'restart');
   cfg = JSON.parse(readFileSync(join(data, 'config.json'), 'utf8'));

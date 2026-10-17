@@ -91,7 +91,7 @@ export function createHandler(ctx, localListener) {
       const asHost = role === 'guest' && !!body.asHost && (hostKeyOk || isTrusted(req));
       const client = studio.addClient({ role, name: cleanText(body.name, 40), slot: body.slot, remote: !isTrusted(req), isHost: asHost });
       return json(res, 200, {
-        id: client.id, token: client.token, iceServers: config.iceServers, output: config.output,
+        id: client.id, token: client.token, iceServers: config.iceServers, output: config.output, guestFeed: config.guestFeed,
         debug: process.env.STUDIOHOST_DEBUG === '1',
       });
     }

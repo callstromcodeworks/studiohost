@@ -147,7 +147,8 @@ function pushTracks(link) {
   const sa = screenStream?.getAudioTracks()[0] || null;
   link.setTrack('cam-video', v, camStream, preview ? { maxBitrate: Math.min(200_000, MAX_VIDEO), scaleResolutionDownBy: 4, maxFramerate: 15 } : { maxBitrate: camBitrate });
   // Host previews are video-only; audio goes to the program (and slot outputs).
-  link.setTrack('cam-audio', preview ? null : a, camStream, Number.isFinite(MAX_AUDIO) ? { maxBitrate: MAX_AUDIO } : undefined);
+  // The mic goes first when the guest's upload is congested.
+  link.setTrack('cam-audio', preview ? null : a, camStream, { priority: 'high', networkPriority: 'high', ...(Number.isFinite(MAX_AUDIO) ? { maxBitrate: MAX_AUDIO } : {}) });
   link.setTrack('screen-video', sv, screenStream || camStream, preview ? { maxBitrate: Math.min(300_000, MAX_VIDEO), scaleResolutionDownBy: 3, maxFramerate: 5 } : { maxBitrate: Math.min(3_000_000, MAX_VIDEO) });
   link.setTrack('screen-audio', preview || featureOnly ? null : sa, screenStream || camStream, Number.isFinite(MAX_AUDIO) ? { maxBitrate: MAX_AUDIO } : undefined);
 }
