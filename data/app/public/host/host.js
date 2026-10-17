@@ -452,6 +452,8 @@ function settingsForm() {
     const maxGuests = h('input', { type: 'number', min: '1', max: '50', value: String(cfg.maxGuests) });
     const feedEach = h('input', { type: 'number', min: '300', max: '20000', step: '100', value: String(cfg.guestFeed.maxKbps) });
     const feedTotal = h('input', { type: 'number', min: '300', max: '200000', step: '100', value: String(cfg.guestFeed.totalKbps) });
+    const feedCodec = h('select', null, h('option', { value: 'auto' }, 'Automatic'), h('option', { value: 'h264' }, 'H.264 (GPU encoder)'));
+    /** @type {HTMLSelectElement} */ (feedCodec).value = cfg.guestFeed.codec === 'h264' ? 'h264' : 'auto';
     const ice = h('textarea', { rows: 5, spellcheck: false }, JSON.stringify(cfg.iceServers, null, 2));
     const save = h('button.btn.primary', { type: 'button' }, 'Save');
     save.addEventListener('click', async () => {
@@ -460,7 +462,7 @@ function settingsForm() {
       save.disabled = true;
       try { toast((await client.post('config-save', {
         maxGuests: Number(maxGuests.value), iceServers,
-        guestFeed: { maxKbps: Number(feedEach.value), totalKbps: Number(feedTotal.value) },
+        guestFeed: { maxKbps: Number(feedEach.value), totalKbps: Number(feedTotal.value), codec: /** @type {HTMLSelectElement} */ (feedCodec).value },
       })).message); }
       catch (e) { toast(e.message, { error: true, ms: 8000 }); }
       save.disabled = false;
@@ -470,6 +472,7 @@ function settingsForm() {
       f('Max guests', maxGuests),
       f('Program video per guest (kbps)', feedEach, 'The most any one guest receives. Guests on slower connections get less automatically.'),
       f('Program video for all guests (kbps)', feedTotal, 'Shared by everyone connected. Keep it well under your upload speed minus your stream bitrate.'),
+      f('Program video codec', feedCodec, 'Choose H.264 if this computer has a GPU video encoder (most NVIDIA, AMD and Intel GPUs do) to take encoding off the CPU. Applies to guests who connect after saving.'),
       h('div.row', null, h('span.grow'), save),
     );
   }).catch((e) => box.replaceChildren(h('p.muted.small', null, e.message)));

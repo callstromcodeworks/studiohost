@@ -26,7 +26,7 @@ const mixer = new AudioMixer();
 
 /**
  * Puts H.264 first for the guest feed when this browser reports a power-efficient (hardware)
- * H.264 encoder at this size, or always when `force` is set (guestFeed.codec "h264" in config.json).
+ * H.264 encoder at this size, or always when `force` is set (H.264 chosen in the studio settings).
  * @param {number} width @param {number} height @param {boolean} force
  * @returns {Promise<{codecs: RTCRtpCodec[] | null, detail: string}>} codecs is null to keep the browser default
  */
@@ -117,11 +117,18 @@ async function main() {
   /** @type {any} */ (window).studioHost.guestCanvas = guestCanvas;
   // When this machine can encode H.264 in hardware, guests' copies prefer it so Chromium uses the
   // GPU's encoder; otherwise the browser's default codec (normally VP8, encoded in software).
-  const forceH264 = client.guestFeed.codec === 'h264';
-  const { codecs: feedCodecs, detail: codecDetail } = await hardwareH264Codecs(guestCanvas.width, guestCanvas.height, forceH264);
-  const codecChoice = !feedCodecs ? 'browser default (no hardware H.264 encoder found)'
-    : forceH264 ? 'H.264 (set in config.json)' : 'H.264 (hardware encoder available)';
-  console.warn(`[program] guest feed codec: ${codecChoice} (${codecDetail})`);
+  // The browser in OBS can under-report its hardware encoder, so the producer can also choose
+  // H.264 in the studio settings. A change applies to guests who connect after it.
+  /** @type {RTCRtpCodec[]|null} */ let feedCodecs = null;
+  const chooseFeedCodecs = async () => {
+    const forceH264 = client.guestFeed.codec === 'h264';
+    const { codecs, detail } = await hardwareH264Codecs(guestCanvas.width, guestCanvas.height, forceH264);
+    feedCodecs = codecs;
+    const choice = !codecs ? 'browser default (no hardware H.264 encoder found)'
+      : forceH264 ? 'H.264 (chosen in studio settings)' : 'H.264 (hardware encoder available)';
+    console.warn(`[program] guest feed codec: ${choice} (${detail})`);
+  };
+  await chooseFeedCodecs();
 
   const programStream = guestCanvas.captureStream(fps);
   const programVideo = programStream.getVideoTracks()[0];
@@ -152,7 +159,12 @@ async function main() {
       applyEncoding(sender, enc);
     }
   };
-  client.on('guest-feed', (m) => { client.guestFeed = m.guestFeed; rebalanceFeed(); });
+  client.on('guest-feed', (m) => {
+    const codecChanged = m.guestFeed.codec !== client.guestFeed.codec;
+    client.guestFeed = m.guestFeed;
+    rebalanceFeed();
+    if (codecChanged) chooseFeedCodecs();
+  });
 
   const links = manageLinks(client, (link) => {
     if (link.purpose !== 'program') return;

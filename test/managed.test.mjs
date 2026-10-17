@@ -142,11 +142,12 @@ test('studio settings save without a restart; a new local port asks for one', as
   const program = (await post('join', { role: 'program' })).body;
   assert.deepEqual(program.guestFeed, { maxKbps: 3000, totalKbps: 12000, codec: 'auto' });
   const programWs = await openWs(program);
-  assert.equal((await post('config-save', { guestFeed: { maxKbps: 2500, totalKbps: 8000 } }, host)).status, 200);
-  assert.deepEqual((await programWs.next((m) => m.type === 'guest-feed')).guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'auto' });
+  assert.equal((await post('config-save', { guestFeed: { maxKbps: 2500, totalKbps: 8000, codec: 'vp9' } }, host)).status, 400);
+  assert.equal((await post('config-save', { guestFeed: { maxKbps: 2500, totalKbps: 8000, codec: 'h264' } }, host)).status, 200);
+  assert.deepEqual((await programWs.next((m) => m.type === 'guest-feed')).guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'h264' });
   programWs.close();
-  assert.deepEqual(JSON.parse(readFileSync(join(data, 'config.json'), 'utf8')).guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'auto' });
-  assert.deepEqual((await post('join', { role: 'program' })).body.guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'auto' });
+  assert.deepEqual(JSON.parse(readFileSync(join(data, 'config.json'), 'utf8')).guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'h264' });
+  assert.deepEqual((await post('join', { role: 'program' })).body.guestFeed, { maxKbps: 2500, totalKbps: 8000, codec: 'h264' });
   assert.equal((await post('config-save', { localPort: LOCAL + 7 }, host)).status, 200);
   await nextMessage((m) => m.type === 'restart');
   cfg = JSON.parse(readFileSync(join(data, 'config.json'), 'utf8'));
