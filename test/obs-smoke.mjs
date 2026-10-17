@@ -217,7 +217,7 @@ async function guestScenarios(obs, host, invite, pw) {
   await act('layout', { layout: 'sides' });
   await act('hide', { participant: await idOf('Weak Guest'), on: true });
   await sleep(2500);
-  await checkFrame(obs, sampler, 'content with one guest hidden: three guests grouped around it', { expectCams: 3 });
+  await checkFrame(obs, sampler, 'content with one guest hidden: three guests placed around it', { expectCams: 3 });
   await act('hide', { participant: await idOf('Weak Guest'), on: false });
 
   // Content off: guests fill the centre again, the content's area is studio again.
@@ -237,10 +237,10 @@ async function guestScenarios(obs, host, invite, pw) {
       const t = computeLayout(await snapshot());
       const scr = t.find((x) => x.kind === 'screen');
       const cams = t.filter((x) => x.kind === 'camera');
-      return scr && cams.length === 4 && cams.filter((c) => c.rect.x + c.rect.w <= scr.rect.x).length === 2
-        && cams.filter((c) => c.rect.x >= scr.rect.x + scr.rect.w).length === 2 ? true : null;
+      return scr && cams.length === 4 && cams.filter((c) => c.rect.x + c.rect.w <= scr.rect.x).length === 1
+        && cams.filter((c) => c.rect.x >= scr.rect.x + scr.rect.w).length === 3 ? true : null;
     }, 10_000);
-    check(!!geometry, 'with a screen share, guests are grouped two on each side');
+    check(!!geometry, 'with a screen share, slot 1 sits left of it and the other three guests right');
     await sleep(2500);
     await checkFrame(obs, sampler, 'screen share as content, "sides" layout', { screenAsVideo: true });
     const screenScene = await waitFor(async () => { const v = await coverage(obs, sampler, 'Studio Host: Guest Screen Share'); return v > 0.05 ? v : null; }, 20_000);
@@ -356,8 +356,11 @@ async function checkFrame(obs, page, label, opts = {}) {
   // Sample a little above centre (the name tag sits at the bottom of a tile).
   for (const t of cams) points.push({ what: 'guest', x: t.rect.x + t.rect.w / 2, y: t.rect.y + t.rect.h * 0.4 });
   if (content) {
-    points.push({ what: content.kind === 'content' ? 'content' : 'screen', x: content.rect.x + content.rect.w / 2, y: content.rect.y + content.rect.h / 2 });
-    points.push({ what: content.kind === 'content' ? 'content' : 'screen', x: content.rect.x + content.rect.w * 0.1, y: content.rect.y + content.rect.h * 0.15 });
+    // The centre plus one point near a corner, skipping points a guest tile sits on (in "pip" the
+    // guests are drawn on top of the content).
+    const onCam = ([x, y]) => cams.some((t) => x >= t.rect.x && x <= t.rect.x + t.rect.w && y >= t.rect.y && y <= t.rect.y + t.rect.h);
+    const probes = [[0.5, 0.5], [0.1, 0.15], [0.1, 0.85]].map(([fx, fy]) => [content.rect.x + content.rect.w * fx, content.rect.y + content.rect.h * fy]).filter((pt) => !onCam(pt));
+    for (const [x, y] of probes.slice(0, 2)) points.push({ what: content.kind === 'content' ? 'content' : 'screen', x, y });
   }
   // Background probes: frame corners inside the margin, and gaps not covered by any tile.
   const covered = (x, y) => tiles.some((t) => x >= t.rect.x - 6 && x <= t.rect.x + t.rect.w + 6 && y >= t.rect.y - 6 && y <= t.rect.y + t.rect.h + 6);
