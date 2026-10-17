@@ -10,7 +10,7 @@ export class StudioClient extends EventTarget {
     this.token = null;
     this.iceServers = [];
     this.output = { width: 1920, height: 1080, fps: 30 };
-    this.guestFeed = { maxKbps: 3000, totalKbps: 12000 };
+    this.guestFeed = { maxKbps: 3000, totalKbps: 12000, codec: 'auto' };
     this.state = null;
     this.events = null;
     this.debug = false;

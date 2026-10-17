@@ -47,7 +47,41 @@ void put32(char *p, uint32_t v)
 	put16(p + 2, v >> 16);
 }
 
+// A video-only output that hands the guest-feed canvas's frames to ObsFeed::videoCallback.
+struct FeedOutput {
+	obs_output_t *output;
+	void *feed;
+};
+
 } // namespace
+
+void register_feed_output()
+{
+	obs_output_info info = {};
+	info.id = ObsFeed::FEED_OUTPUT_ID;
+	info.flags = OBS_OUTPUT_VIDEO;
+	info.get_name = [](void *) {
+		return "Studio Host guest feed";
+	};
+	info.create = [](obs_data_t *settings, obs_output_t *output) -> void * {
+		return new FeedOutput{output, reinterpret_cast<void *>(obs_data_get_int(settings, "feed"))};
+	};
+	info.destroy = [](void *data) {
+		delete static_cast<FeedOutput *>(data);
+	};
+	info.start = [](void *data) {
+		auto *out = static_cast<FeedOutput *>(data);
+		return obs_output_can_begin_data_capture(out->output, 0) &&
+		       obs_output_begin_data_capture(out->output, 0);
+	};
+	info.stop = [](void *data, uint64_t) {
+		obs_output_end_data_capture(static_cast<FeedOutput *>(data)->output);
+	};
+	info.raw_video = [](void *data, struct video_data *frame) {
+		ObsFeed::videoCallback(static_cast<FeedOutput *>(data)->feed, frame);
+	};
+	obs_register_output(&info);
+}
 
 void keep_studiohost_audio_off_track(int track)
 {
@@ -84,7 +118,10 @@ void ObsFeed::setEnabled(bool on)
 		return;
 	if (!on) {
 		// Both calls wait for a callback in progress to finish, so none runs after this.
-		obs_remove_raw_video_callback(videoCallback, this);
+		if (canvas)
+			stopCanvas();
+		else
+			obs_remove_raw_video_callback(videoCallback, this);
 		obs_remove_raw_audio_callback(FEED_TRACK - 1, audioCallback, this);
 		trackTimer.stop();
 		enabled = false;
@@ -106,13 +143,15 @@ void ObsFeed::setEnabled(bool on)
 	keep_studiohost_audio_off_track(FEED_TRACK);
 	trackTimer.start();
 
-	video_scale_info vconv = {};
-	vconv.format = VIDEO_FORMAT_I420;
-	vconv.width = width;
-	vconv.height = height;
-	vconv.range = VIDEO_RANGE_PARTIAL;
-	vconv.colorspace = VIDEO_CS_709;
-	obs_add_raw_video_callback(&vconv, videoCallback, this);
+	if (!startCanvas(ovi)) {
+		video_scale_info vconv = {};
+		vconv.format = VIDEO_FORMAT_I420;
+		vconv.width = width;
+		vconv.height = height;
+		vconv.range = VIDEO_RANGE_PARTIAL;
+		vconv.colorspace = VIDEO_CS_709;
+		obs_add_raw_video_callback(&vconv, videoCallback, this);
+	}
 
 	obs_audio_info oai = {};
 	sampleRate = obs_get_audio_info(&oai) && oai.samples_per_sec ? oai.samples_per_sec : 48000;
@@ -123,7 +162,69 @@ void ObsFeed::setEnabled(bool on)
 	obs_add_raw_audio_callback(FEED_TRACK - 1, &aconv, audioCallback, this);
 
 	enabled = true;
-	obs_log(LOG_INFO, "OBS feed to guests started (%ux%u, track %d audio)", width, height, FEED_TRACK);
+	obs_log(LOG_INFO, "OBS feed to guests started (%ux%u, scaled on the %s, track %d audio)", width, height,
+		canvas ? "GPU" : "CPU", FEED_TRACK);
+}
+
+// A private canvas showing the program at the feed size, read through a video-only output.
+bool ObsFeed::startCanvas(const obs_video_info &ovi)
+{
+	obs_video_info fovi = ovi;
+	fovi.output_width = width;
+	fovi.output_height = height;
+	fovi.output_format = VIDEO_FORMAT_I420;
+	fovi.colorspace = VIDEO_CS_709;
+	fovi.range = VIDEO_RANGE_PARTIAL;
+	fovi.gpu_conversion = true;
+	fovi.scale_type = OBS_SCALE_BILINEAR;
+	canvas = obs_canvas_create_private("Studio Host guest feed", &fovi, 0);
+	if (!canvas || !obs_canvas_has_video(canvas)) {
+		obs_log(LOG_WARNING, "OBS feed to guests: no GPU canvas, scaling on the CPU");
+		stopCanvas();
+		return false;
+	}
+	obs_source_t *program = obs_get_output_source(0);
+	obs_canvas_set_channel(canvas, 0, program);
+	obs_source_release(program);
+	signal_handler_connect(obs_get_signal_handler(), "channel_change", channelChanged, this);
+
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "feed", reinterpret_cast<intptr_t>(this));
+	canvasOutput = obs_output_create(FEED_OUTPUT_ID, "Studio Host guest feed", settings, nullptr);
+	obs_data_release(settings);
+	if (canvasOutput) {
+		obs_output_set_media(canvasOutput, obs_canvas_get_video(canvas), nullptr);
+		if (obs_output_start(canvasOutput))
+			return true;
+	}
+	obs_log(LOG_WARNING, "OBS feed to guests: GPU canvas output didn't start, scaling on the CPU");
+	stopCanvas();
+	return false;
+}
+
+void ObsFeed::stopCanvas()
+{
+	if (canvasOutput) {
+		obs_output_stop(canvasOutput);
+		obs_output_release(canvasOutput);
+		canvasOutput = nullptr;
+	}
+	if (canvas) {
+		signal_handler_disconnect(obs_get_signal_handler(), "channel_change", channelChanged, this);
+		obs_canvas_set_channel(canvas, 0, nullptr);
+		obs_canvas_remove(canvas);
+		obs_canvas_release(canvas);
+		canvas = nullptr;
+	}
+}
+
+// The program's transition was replaced (for example a different transition type); follow it.
+void ObsFeed::channelChanged(void *param, calldata_t *data)
+{
+	auto *self = static_cast<ObsFeed *>(param);
+	if (calldata_int(data, "channel") != 0 || !self->canvas)
+		return;
+	obs_canvas_set_channel(self->canvas, 0, static_cast<obs_source_t *>(calldata_ptr(data, "source")));
 }
 
 // OBS video thread.

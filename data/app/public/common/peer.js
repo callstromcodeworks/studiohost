@@ -119,13 +119,15 @@ export class PeerLink extends EventTarget {
   /**
    * Sends `track` under a stable name, replacing whatever was sent under that name before.
    * Passing null stops sending it.
+   * Passing `codecs` sends it on its own transceiver with those codecs preferred, so the choice
+   * doesn't also apply to what the other side sends.
    * @param {string} name @param {MediaStreamTrack|null} track @param {MediaStream} stream
-   * @param {RTCRtpEncodingParameters} [encoding]
+   * @param {RTCRtpEncodingParameters} [encoding] @param {RTCRtpCodec[]} [codecs]
    */
-  async setTrack(name, track, stream, encoding) {
+  async setTrack(name, track, stream, encoding, codecs) {
     if (this.closed) return;
     if (this.holdTracks) {
-      this.heldTracks.push(() => this.setTrack(name, track, stream, encoding));
+      this.heldTracks.push(() => this.setTrack(name, track, stream, encoding, codecs));
       return;
     }
     const existing = this.senders.get(name);
@@ -139,7 +141,14 @@ export class PeerLink extends EventTarget {
       return;
     }
     if (!track) return;
-    const sender = this.pc.addTrack(track, stream);
+    let sender;
+    if (codecs) {
+      const transceiver = this.pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
+      try { transceiver.setCodecPreferences(codecs); } catch (err) { console.warn('[peer] codec preference not applied', String(err)); }
+      sender = transceiver.sender;
+    } else {
+      sender = this.pc.addTrack(track, stream);
+    }
     this.senders.set(name, sender);
     if (encoding) await applyEncoding(sender, encoding);
   }
@@ -221,6 +230,8 @@ export async function linkStats(link) {
     peer: link.peer, purpose: link.purpose, state: pc.connectionState, ice: pc.iceConnectionState,
     local: null, remote: null, framesIn: 0, bytesIn: 0, bytesOut: 0, rtt: null,
     videoBytesIn: 0, audioBytesIn: 0, fps: null, width: null, height: null, audioEnergy: 0,
+    /** @type {{codec: string|null, encoder: string|null, hardware: boolean|null, width: number, height: number, fps: number|null}|null} */
+    sent: null,
   };
   try {
     const stats = await pc.getStats();
@@ -248,7 +259,14 @@ export async function linkStats(link) {
           out.audioEnergy += s.totalAudioEnergy || 0;
         }
       }
-      if (s.type === 'outbound-rtp') out.bytesOut += s.bytesSent || 0;
+      if (s.type === 'outbound-rtp') {
+        out.bytesOut += s.bytesSent || 0;
+        // What this side encodes video with (the program page logs it for each guest).
+        if (s.kind === 'video' && s.frameWidth) {
+          out.sent = { codec: byId.get(s.codecId)?.mimeType?.replace(/^video\//, '') || null, encoder: s.encoderImplementation || null,
+            hardware: s.powerEfficientEncoder ?? null, width: s.frameWidth, height: s.frameHeight, fps: s.framesPerSecond ?? null };
+        }
+      }
     });
   } catch { /* stats are best-effort */ }
   return out;
