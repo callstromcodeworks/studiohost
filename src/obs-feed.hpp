@@ -33,7 +33,7 @@ namespace studiohost {
 class ServerProcess;
 
 // Sends what OBS is outputting to the server, for the studio hub to pass on to guests:
-//  - the program picture, scaled down to 960 pixels wide (I420, at most 30 fps)
+//  - the program picture, scaled down to at most FEED_MAX_WIDTH pixels wide (I420, at most 30 fps)
 //  - the audio of mixer track FEED_TRACK, which carries everything in OBS except Studio Host's
 //    own guest audio (the plugin takes its sources off that track), so guests don't hear
 //    themselves
@@ -43,6 +43,7 @@ class ObsFeed : public QObject {
 
 public:
 	static constexpr int FEED_TRACK = 6; // 1-based, as shown in OBS
+	static constexpr uint32_t FEED_MAX_WIDTH = 1280;
 
 	explicit ObsFeed(ServerProcess *server, QObject *parent = nullptr);
 	~ObsFeed() override;

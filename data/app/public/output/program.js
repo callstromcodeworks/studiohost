@@ -4,10 +4,16 @@
 // picture plus their mix-minus so they can see and hear the show. Inside OBS the plugin
 // also sends the real OBS output (picture and audio), which guests get instead.
 import { StudioClient, param, forwardConsoleToServer } from '../common/client.js';
-import { manageLinks, linkStats } from '../common/peer.js';
+import { manageLinks, linkStats, applyEncoding } from '../common/peer.js';
 import { MediaBank } from '../common/media.js';
 import { StageRenderer, REF_W, REF_H, drawContentPlaceholder } from '../common/render.js';
 import { AudioMixer } from '../common/mixer.js';
+
+const GUEST_FEED_WIDTH = 1280;
+const GUEST_FEED_MIN_KBPS = 250;
+// Each guest's copy is a separate encode, so encoding cost grows with the number of guests. Past
+// this many pixels per frame across all guests (four 960x540 copies), each copy is scaled down.
+const GUEST_FEED_PIXEL_BUDGET = 4 * 960 * 540;
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('stage'));
 const notice = /** @type {HTMLElement} */ (document.getElementById('notice'));
@@ -41,11 +47,12 @@ async function main() {
   canvas.height = height;
   renderer.start(fps);
 
-  // Guests get their own reduced-size copy of the picture. The OBS-source hole would show as
-  // black to them, so their copy fills it with a labelled placeholder instead.
+  // Guests get their own reduced-size copy of the picture (at most 1280 wide, like the OBS feed
+  // the plugin sends). The OBS-source hole would show as black to them, so their copy fills it
+  // with a labelled placeholder instead.
   const guestCanvas = document.createElement('canvas');
-  guestCanvas.width = 960;
-  guestCanvas.height = Math.round((960 * height) / width);
+  guestCanvas.width = Math.min(GUEST_FEED_WIDTH, width);
+  guestCanvas.height = Math.round((guestCanvas.width * height) / width / 2) * 2;
   const gctx = /** @type {CanvasRenderingContext2D} */ (guestCanvas.getContext('2d', { alpha: false }));
   // The latest frame of the OBS output, when the plugin sends it.
   /** @type {{frame: VideoFrame, at: number}|null} */ let obsFrame = null;
@@ -84,17 +91,48 @@ async function main() {
       gctx.globalAlpha = 1;
     }
   };
+  /** @type {any} */ (window).studioHost.guestCanvas = guestCanvas;
   const programStream = guestCanvas.captureStream(fps);
   const programVideo = programStream.getVideoTracks()[0];
+
+  // Each guest gets its own encode of the program, and WebRTC's congestion control lowers it
+  // for guests on weaker connections. The caps only stop strong connections from taking more
+  // than their share of this machine's upload (which also carries the live stream) and, with
+  // many guests, keep the encoders from taking more than their share of its CPU.
+  /** @type {WeakMap<import('../common/peer.js').PeerLink, string>} */
+  const feedApplied = new WeakMap();
+  /** @returns {RTCRtpEncodingParameters} */
+  const feedEncoding = () => {
+    const open = Math.max(1, [...links.values()].filter((l) => !l.closed && l.purpose === 'program').length);
+    const { maxKbps, totalKbps } = client.guestFeed;
+    const pixels = open * guestCanvas.width * guestCanvas.height;
+    return {
+      maxBitrate: Math.max(GUEST_FEED_MIN_KBPS, Math.min(maxKbps, Math.floor(totalKbps / open))) * 1000,
+      scaleResolutionDownBy: Math.max(1, Math.round(Math.sqrt(pixels / GUEST_FEED_PIXEL_BUDGET) * 100) / 100),
+    };
+  };
+  const rebalanceFeed = () => {
+    const enc = feedEncoding();
+    const key = JSON.stringify(enc);
+    for (const l of links.values()) {
+      const sender = l.senders.get('program-video');
+      if (l.closed || !sender || feedApplied.get(l) === key) continue;
+      feedApplied.set(l, key);
+      applyEncoding(sender, enc);
+    }
+  };
+  client.on('guest-feed', (m) => { client.guestFeed = m.guestFeed; rebalanceFeed(); });
 
   const links = manageLinks(client, (link) => {
     if (link.purpose !== 'program') return;
     bank.watch(link);
     const out = new MediaStream();
-    link.setTrack('program-video', programVideo, out, { maxBitrate: 1_200_000, maxFramerate: Math.min(fps, 30) });
+    link.setTrack('program-video', programVideo, out, { ...feedEncoding(), maxFramerate: Math.min(fps, 30) })
+      .then(rebalanceFeed);
     const mm = mixer.mixMinusFor(link.peer).getAudioTracks()[0];
-    link.setTrack('program-audio', mm, out);
-    link.addEventListener('closed', () => mixer.dropGuest(link.peer));
+    // Audio goes first when a guest's connection is congested.
+    link.setTrack('program-audio', mm, out, { priority: 'high', networkPriority: 'high' });
+    link.addEventListener('closed', () => { mixer.dropGuest(link.peer); setTimeout(rebalanceFeed); });
     let dropped = false;
     link.addEventListener('state', (/** @type {any} */ e) => {
       const name = client.state?.participants.find((p) => p.id === link.peer)?.name || link.peer.slice(0, 8);
@@ -103,6 +141,7 @@ async function main() {
       else if (dropped && (e.detail === 'connected' || e.detail === 'completed')) { dropped = false; console.warn(`connection to ${name}: back (${e.detail})`); }
     });
   });
+  /** @type {any} */ (window).studioHost.links = links;
 
   // Report each guest's connection health and incoming media rates to the server (shown in
   // the producer dock).
@@ -121,6 +160,7 @@ async function main() {
       prev.set(l.peer, { at: now, videoBytesIn: l.videoBytesIn, audioBytesIn: l.audioBytesIn, audioEnergy: l.audioEnergy });
     }
     client.post('diag', { links: list }).catch(() => {});
+    rebalanceFeed();
   }, 3000);
 
   const syncAudio = () => {

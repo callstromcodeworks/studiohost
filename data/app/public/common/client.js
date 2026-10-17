@@ -10,6 +10,7 @@ export class StudioClient extends EventTarget {
     this.token = null;
     this.iceServers = [];
     this.output = { width: 1920, height: 1080, fps: 30 };
+    this.guestFeed = { maxKbps: 3000, totalKbps: 12000 };
     this.state = null;
     this.events = null;
     this.debug = false;
@@ -25,7 +26,7 @@ export class StudioClient extends EventTarget {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `Join failed (${res.status})`);
-    Object.assign(this, { id: body.id, token: body.token, iceServers: body.iceServers, output: body.output, debug: !!body.debug });
+    Object.assign(this, { id: body.id, token: body.token, iceServers: body.iceServers, output: body.output, guestFeed: body.guestFeed || this.guestFeed, debug: !!body.debug });
     this.open();
     return body;
   }

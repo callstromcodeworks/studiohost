@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QByteArray>
 #include <QMetaObject>
 
+#include <algorithm>
 #include <cstring>
 
 namespace studiohost {
@@ -96,8 +97,8 @@ void ObsFeed::setEnabled(bool on)
 		obs_log(LOG_WARNING, "OBS feed to guests not started: no video output");
 		return;
 	}
-	width = 960;
-	height = (static_cast<uint32_t>(960ull * ovi.output_height / ovi.output_width) + 1) & ~1u;
+	width = std::min<uint32_t>(FEED_MAX_WIDTH, ovi.output_width) & ~1u;
+	height = (static_cast<uint32_t>(static_cast<uint64_t>(width) * ovi.output_height / ovi.output_width) + 1) & ~1u;
 	double fps = ovi.fps_den ? static_cast<double>(ovi.fps_num) / ovi.fps_den : 30.0;
 	frameDivider = fps > 30.5 ? static_cast<int>(fps / 30.0 + 0.5) : 1;
 	frameCount = 0;

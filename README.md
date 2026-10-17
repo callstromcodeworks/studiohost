@@ -37,7 +37,9 @@ Guest browser ──HTTPS invite link──▶ server
 Guest browser ──WebRTC audio/video──▶ studio hub, guest/screen sources, dock previews
 ```
 
-While guests are connected, the plugin also sends the studio hub what OBS is outputting, so guests see and hear the actual show: the program picture (scaled to 960 pixels wide) and the audio of mixer **track 6**. Studio Host takes its own guest audio off track 6 so guests don't hear themselves; leave Studio Host Audio and guest sources off that track (Edit → Advanced Audio Properties). Everything else on track 6, such as your microphone and desktop audio, reaches the guests.
+While guests are connected, the plugin also sends the studio hub what OBS is outputting, so guests see and hear the actual show: the program picture (scaled to 1280 pixels wide) and the audio of mixer **track 6**. Studio Host takes its own guest audio off track 6 so guests don't hear themselves; leave Studio Host Audio and guest sources off that track (Edit → Advanced Audio Properties). Everything else on track 6, such as your microphone and desktop audio, reaches the guests.
+
+Each guest gets their own copy of the program, and WebRTC lowers it for guests on slower connections, so a weak connection doesn't hold back the others. Two caps in the dock's studio settings keep the program from using up the upload your live stream needs: **Program video per guest** (3000 kbps by default) and **Program video for all guests** (12000 kbps by default, shared evenly by everyone connected). Since each copy is a separate encode, with more than two guests the copies are also scaled down so the total encoding work stays about that of four 960×540 copies. Program audio, and each guest's microphone, are sent ahead of video when a connection is congested.
 
 Media goes browser-to-browser over WebRTC; it never passes through the server. The studio pages inside OBS keep running (and keep their guests connected) even when their sources aren't on screen, so switching scenes is instant; that costs some CPU while Studio Host is loaded.
 

@@ -24,6 +24,8 @@ export const CONFIG_PATH = join(DATA_DIR, 'config.json');
  * @property {string} guestKey           Invite token included in the guest link.
  * @property {number} maxGuests
  * @property {{width: number, height: number, fps: number}} output
+ * @property {{maxKbps: number, totalKbps: number}} guestFeed  Caps on the program video sent back to
+ *   guests: per guest, and shared by all guests (this machine's upload also carries the live stream).
  * @property {{url: string, password: string, sceneName: string, slots: number}} obs
  */
 
@@ -40,6 +42,7 @@ function defaults() {
     guestKey: token(),
     maxGuests: 10,
     output: { width: 1920, height: 1080, fps: 30 },
+    guestFeed: { maxKbps: 3000, totalKbps: 12000 },
     obs: { url: 'ws://127.0.0.1:4455', password: '', sceneName: 'Studio Host', slots: 4 },
   };
 }
@@ -60,6 +63,7 @@ export function loadConfig() {
     ...base,
     ...fromDisk,
     output: { ...base.output, ...(fromDisk.output || {}) },
+    guestFeed: { ...base.guestFeed, ...(fromDisk.guestFeed || {}) },
     obs: { ...base.obs, ...(fromDisk.obs || {}) },
   };
   if (!existsSync(CONFIG_PATH)) {

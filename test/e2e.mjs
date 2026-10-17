@@ -104,6 +104,16 @@ try {
   for (const [g, n] of [[ada, 'Ada'], [grace, 'Grace']]) {
     check(await waitFor(() => g.evaluate(() => { const v = document.querySelector('#program'); return v.srcObject && v.videoWidth > 0 && !v.paused; })), `${n} sees the program feed`);
   }
+  // Two guests share the default caps (3000 kbps each, 12000 in all), and program audio goes first.
+  check(await waitFor(() => program.evaluate(() => {
+    const links = [...window.studioHost.links.values()].filter((l) => !l.closed);
+    return links.length === 2 && links.every((l) => {
+      const v = l.senders.get('program-video')?.getParameters().encodings?.[0];
+      const a = l.senders.get('program-audio')?.getParameters().encodings?.[0];
+      return v?.maxBitrate === 3_000_000 && v?.scaleResolutionDownBy === 1 && a?.priority === 'high';
+    });
+  }), 8000), 'program video is capped per guest and program audio has priority');
+  check(await program.evaluate(() => window.studioHost.guestCanvas.width === 1280), 'guests get a 1280-wide program picture');
 
   check(await waitFor(() => host.evaluate(() => {
     const st = window.studioHost.client.state; const ada = st.participants.find((p) => p.name === 'Ada Lovelace');
