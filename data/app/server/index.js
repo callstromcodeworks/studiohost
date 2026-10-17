@@ -105,7 +105,7 @@ function configSave(body) {
     const maxKbps = Number(body.guestFeed?.maxKbps), totalKbps = Number(body.guestFeed?.totalKbps);
     if (!Number.isInteger(maxKbps) || maxKbps < 300 || maxKbps > 20000) throw new Error('Program video per guest must be between 300 and 20000 kbps.');
     if (!Number.isInteger(totalKbps) || totalKbps < 300 || totalKbps > 200000) throw new Error('Program video for all guests must be between 300 and 200000 kbps.');
-    patch.guestFeed = { maxKbps, totalKbps };
+    patch.guestFeed = { ...config.guestFeed, maxKbps, totalKbps };
   }
   let restart = false;
   if ('localPort' in body) {

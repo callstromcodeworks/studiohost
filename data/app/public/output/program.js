@@ -25,15 +25,12 @@ const mixer = new AudioMixer();
 /** @type {string|null} */ let clipKey = null;
 
 /**
- * The browser's H.264 codecs first, when it reports a power-efficient (hardware) H.264 encoder
- * at this size; otherwise null.
- * @param {number} width @param {number} height @returns {Promise<RTCRtpCodec[]|null>}
- */
-/**
- * Puts H.264 first for the guest feed when this browser can encode it in hardware.
+ * Puts H.264 first for the guest feed when this browser reports a power-efficient (hardware)
+ * H.264 encoder at this size, or always when `force` is set (guestFeed.codec "h264" in config.json).
+ * @param {number} width @param {number} height @param {boolean} force
  * @returns {Promise<{codecs: RTCRtpCodec[] | null, detail: string}>} codecs is null to keep the browser default
  */
-async function hardwareH264Codecs(width, height) {
+async function hardwareH264Codecs(width, height, force) {
   const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
   const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
   const detail = (info) => `H.264 in WebRTC: ${h264.length ? 'yes' : 'no'}, encode supported: ${info?.supported ?? 'unknown'}, `
@@ -42,9 +39,10 @@ async function hardwareH264Codecs(width, height) {
     const info = await navigator.mediaCapabilities.encodingInfo({
       type: 'webrtc', video: { contentType: 'video/H264', width, height, bitrate: 3_000_000, framerate: 30 },
     });
-    if (!h264.length || !info.supported || !info.powerEfficient) return { codecs: null, detail: detail(info) };
+    if (!h264.length || (!force && (!info.supported || !info.powerEfficient))) return { codecs: null, detail: detail(info) };
     return { codecs: [...h264, ...codecs.filter((c) => !h264.includes(c))], detail: detail(info) };
   } catch (err) {
+    if (force && h264.length) return { codecs: [...h264, ...codecs.filter((c) => !h264.includes(c))], detail: `${detail(null)}; check failed: ${err?.message || err}` };
     return { codecs: null, detail: `${detail(null)}; check failed: ${err?.message || err}` };
   }
 }
@@ -119,8 +117,11 @@ async function main() {
   /** @type {any} */ (window).studioHost.guestCanvas = guestCanvas;
   // When this machine can encode H.264 in hardware, guests' copies prefer it so Chromium uses the
   // GPU's encoder; otherwise the browser's default codec (normally VP8, encoded in software).
-  const { codecs: feedCodecs, detail: codecDetail } = await hardwareH264Codecs(guestCanvas.width, guestCanvas.height);
-  console.warn(`[program] guest feed codec: ${feedCodecs ? 'H.264 (hardware encoder available)' : 'browser default (no hardware H.264 encoder found)'} (${codecDetail})`);
+  const forceH264 = client.guestFeed.codec === 'h264';
+  const { codecs: feedCodecs, detail: codecDetail } = await hardwareH264Codecs(guestCanvas.width, guestCanvas.height, forceH264);
+  const codecChoice = !feedCodecs ? 'browser default (no hardware H.264 encoder found)'
+    : forceH264 ? 'H.264 (set in config.json)' : 'H.264 (hardware encoder available)';
+  console.warn(`[program] guest feed codec: ${codecChoice} (${codecDetail})`);
 
   const programStream = guestCanvas.captureStream(fps);
   const programVideo = programStream.getVideoTracks()[0];
