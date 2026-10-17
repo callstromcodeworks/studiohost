@@ -11,6 +11,9 @@ import { AudioMixer } from '../common/mixer.js';
 
 const GUEST_FEED_WIDTH = 1280;
 const GUEST_FEED_MIN_KBPS = 250;
+// Each guest's copy is a separate encode, so encoding cost grows with the number of guests. Past
+// this many pixels per frame across all guests (four 960x540 copies), each copy is scaled down.
+const GUEST_FEED_PIXEL_BUDGET = 4 * 960 * 540;
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('stage'));
 const notice = /** @type {HTMLElement} */ (document.getElementById('notice'));
@@ -94,21 +97,28 @@ async function main() {
 
   // Each guest gets its own encode of the program, and WebRTC's congestion control lowers it
   // for guests on weaker connections. The caps only stop strong connections from taking more
-  // than their share of this machine's upload, which also carries the live stream.
-  /** @type {WeakMap<import('../common/peer.js').PeerLink, number>} */
+  // than their share of this machine's upload (which also carries the live stream) and, with
+  // many guests, keep the encoders from taking more than their share of its CPU.
+  /** @type {WeakMap<import('../common/peer.js').PeerLink, string>} */
   const feedApplied = new WeakMap();
-  const feedBitrate = () => {
-    const open = [...links.values()].filter((l) => !l.closed && l.purpose === 'program').length;
+  /** @returns {RTCRtpEncodingParameters} */
+  const feedEncoding = () => {
+    const open = Math.max(1, [...links.values()].filter((l) => !l.closed && l.purpose === 'program').length);
     const { maxKbps, totalKbps } = client.guestFeed;
-    return Math.max(GUEST_FEED_MIN_KBPS, Math.min(maxKbps, Math.floor(totalKbps / Math.max(1, open)))) * 1000;
+    const pixels = open * guestCanvas.width * guestCanvas.height;
+    return {
+      maxBitrate: Math.max(GUEST_FEED_MIN_KBPS, Math.min(maxKbps, Math.floor(totalKbps / open))) * 1000,
+      scaleResolutionDownBy: Math.max(1, Math.round(Math.sqrt(pixels / GUEST_FEED_PIXEL_BUDGET) * 100) / 100),
+    };
   };
   const rebalanceFeed = () => {
-    const each = feedBitrate();
+    const enc = feedEncoding();
+    const key = JSON.stringify(enc);
     for (const l of links.values()) {
       const sender = l.senders.get('program-video');
-      if (l.closed || !sender || feedApplied.get(l) === each) continue;
-      feedApplied.set(l, each);
-      applyEncoding(sender, { maxBitrate: each });
+      if (l.closed || !sender || feedApplied.get(l) === key) continue;
+      feedApplied.set(l, key);
+      applyEncoding(sender, enc);
     }
   };
   client.on('guest-feed', (m) => { client.guestFeed = m.guestFeed; rebalanceFeed(); });
@@ -117,7 +127,7 @@ async function main() {
     if (link.purpose !== 'program') return;
     bank.watch(link);
     const out = new MediaStream();
-    link.setTrack('program-video', programVideo, out, { maxBitrate: feedBitrate(), maxFramerate: Math.min(fps, 30) })
+    link.setTrack('program-video', programVideo, out, { ...feedEncoding(), maxFramerate: Math.min(fps, 30) })
       .then(rebalanceFeed);
     const mm = mixer.mixMinusFor(link.peer).getAudioTracks()[0];
     // Audio goes first when a guest's connection is congested.

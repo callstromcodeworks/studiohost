@@ -110,7 +110,7 @@ try {
     return links.length === 2 && links.every((l) => {
       const v = l.senders.get('program-video')?.getParameters().encodings?.[0];
       const a = l.senders.get('program-audio')?.getParameters().encodings?.[0];
-      return v?.maxBitrate === 3_000_000 && a?.priority === 'high';
+      return v?.maxBitrate === 3_000_000 && v?.scaleResolutionDownBy === 1 && a?.priority === 'high';
     });
   }), 8000), 'program video is capped per guest and program audio has priority');
   check(await program.evaluate(() => window.studioHost.guestCanvas.width === 1280), 'guests get a 1280-wide program picture');
