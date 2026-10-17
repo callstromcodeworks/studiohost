@@ -93,7 +93,7 @@ Start OBS. On first launch Studio Host starts its server, opens the setup wizard
 The picture uses one of two layout families. Which one applies depends on what you choose in the **Content** picker (below): with no content, the guests-only layout is used; once you pick a screen share or an OBS source, the with-content layout is used.
 
 - **Guests only** — Solo, Group, Leader, Side by side. Used while no content is showing; the guests fill the frame.
-- **With content** — Guests on sides (content centered, guests split into a column on each side), Guests right, Picture-in-picture (slot 1 in the top-left corner, the other guests stacked down the right edge, content in the middle), Content only. Used while content is showing.
+- **With content** — Guests on sides (slot 1 in the top-left corner, the other guests stacked down the right edge, content centered between them), Guests right, Picture-in-picture (the same guest placement on top of full-screen content), Content only. Used while content is showing.
 
 Pick one layout from each row in the dock; whichever applies is marked "in use".
 

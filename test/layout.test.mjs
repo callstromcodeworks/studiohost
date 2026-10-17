@@ -96,27 +96,6 @@ test('without content, guests fill the centre; with content, the content layout 
   assert.equal(live.filter((t) => t.kind === 'screen').length, 1);
 });
 
-test('"sides": content centred, guests grouped evenly left and right, nothing overlaps', () => {
-  for (let n = 1; n <= 8; n++) {
-    const tiles = computeLayout(studioState({ n, content: { kind: 'obs', source: 'S' } }));
-    const content = tiles.find((t) => t.kind === 'content');
-    const cams = tiles.filter((t) => t.kind === 'camera');
-    assert.equal(cams.length, n);
-    const cx = content.rect.x + content.rect.w / 2;
-    assert.ok(Math.abs(cx - REF_W / 2) < 1, `content centred for n=${n}`);
-    const left = cams.filter((t) => t.rect.x + t.rect.w <= content.rect.x);
-    const right = cams.filter((t) => t.rect.x >= content.rect.x + content.rect.w);
-    assert.equal(left.length + right.length, n, `every guest beside the content for n=${n}`);
-    assert.equal(left.length, Math.ceil(n / 2));
-    for (const t of tiles) assert.ok(inside(t.rect));
-    for (let i = 0; i < tiles.length; i++) for (let j = i + 1; j < tiles.length; j++) assert.ok(!overlap(tiles[i].rect, tiles[j].rect), `n=${n} overlap`);
-  }
-  // The content stays put as guests come and go (n >= 1, up to 4 per side's width bucket).
-  const r1 = obsContentRect(studioState({ n: 1, content: { kind: 'obs', source: 'S' } })).rect;
-  const r4 = obsContentRect(studioState({ n: 4, content: { kind: 'obs', source: 'S' } })).rect;
-  assert.deepEqual(r1, r4);
-});
-
 test('every content layout keeps tiles inside the frame, and no guests means content only', () => {
   for (const contentLayout of CONTENT_LAYOUTS) {
     for (let n = 0; n <= 6; n++) {
@@ -150,24 +129,32 @@ test('guests to the right of the content get their name tags on the right', () =
   assert.ok(computeLayout(studioState({ n: 4 })).every((t) => !t.nameRight));
 });
 
-test('"pip": slot 1 top-left, other guests stacked down the right from the top, nothing overlaps', () => {
-  for (let n = 1; n <= 8; n++) {
-    const tiles = computeLayout(studioState({ n, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } }));
-    const content = tiles.find((t) => t.kind === 'content');
-    const cams = tiles.filter((t) => t.kind === 'camera');
-    assert.equal(cams[0].pid, 'g0');
-    assert.ok(cams[0].rect.x + cams[0].rect.w <= content.rect.x, `slot 1 left of the content n=${n}`);
-    assert.ok(cams[0].rect.y < REF_H / 4, `slot 1 at the top n=${n}`);
-    const right = cams.slice(1);
-    for (const [i, t] of right.entries()) {
-      assert.ok(t.rect.x >= content.rect.x + content.rect.w, `guest right of the content n=${n}`);
-      if (i) assert.ok(t.rect.y > right[i - 1].rect.y, `stacked top to bottom n=${n}`);
+for (const contentLayout of ['sides', 'pip']) {
+  test(`"${contentLayout}": slot 1 top-left, other guests stacked down the right from the top`, () => {
+    for (let n = 1; n <= 8; n++) {
+      const tiles = computeLayout(studioState({ n, contentLayout, content: { kind: 'obs', source: 'S' } }));
+      const content = tiles.find((t) => t.kind === 'content');
+      const cams = tiles.filter((t) => t.kind === 'camera');
+      assert.equal(cams.length, n);
+      assert.equal(cams[0].pid, 'g0');
+      assert.ok(cams[0].rect.x < REF_W / 4 && cams[0].rect.y < REF_H / 4, `slot 1 top-left n=${n}`);
+      const right = cams.slice(1);
+      for (const [i, t] of right.entries()) {
+        assert.ok(t.rect.x > (REF_W * 3) / 4, `guest on the right n=${n}`);
+        if (i) assert.ok(t.rect.y > right[i - 1].rect.y, `stacked top to bottom n=${n}`);
+      }
+      if (right.length) assert.equal(right[0].rect.y, cams[0].rect.y, `right column starts at the top n=${n}`);
+      for (const t of tiles) assert.ok(inside(t.rect));
+      for (let i = 0; i < cams.length; i++) for (let j = i + 1; j < cams.length; j++) assert.ok(!overlap(cams[i].rect, cams[j].rect));
+      if (contentLayout === 'pip') assert.deepEqual(content.rect, { x: 0, y: 0, w: REF_W, h: REF_H }, 'content covers the frame');
+      else {
+        assert.ok(Math.abs(content.rect.x + content.rect.w / 2 - REF_W / 2) < 1, `content centred n=${n}`);
+        for (const t of cams) assert.ok(!overlap(t.rect, content.rect), `guest beside the content n=${n}`);
+      }
     }
-    if (right.length) assert.equal(right[0].rect.y, cams[0].rect.y, `right column starts at the top n=${n}`);
-    for (let i = 0; i < cams.length; i++) for (let j = i + 1; j < cams.length; j++) assert.ok(!overlap(cams[i].rect, cams[j].rect));
-  }
-  // The content stays put as guests come and go.
-  const r1 = obsContentRect(studioState({ n: 1, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } })).rect;
-  const r6 = obsContentRect(studioState({ n: 6, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } })).rect;
-  assert.deepEqual(r1, r6);
-});
+    // The content stays put as guests come and go.
+    const r1 = obsContentRect(studioState({ n: 1, contentLayout, content: { kind: 'obs', source: 'S' } })).rect;
+    const r6 = obsContentRect(studioState({ n: 6, contentLayout, content: { kind: 'obs', source: 'S' } })).rect;
+    assert.deepEqual(r1, r6);
+  });
+}

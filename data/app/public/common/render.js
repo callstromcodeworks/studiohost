@@ -59,17 +59,6 @@ function columnRects(n, col, gap = GAP) {
 }
 
 /**
- * Stacks n tiles in a side column, letting them grow taller than 16:9 (up to 3:4 portrait)
- * so a few guests beside the content use the full height. @param {number} n @param {Rect} col
- */
-function sideColumnRects(n, col, gap = GAP) {
-  if (n <= 0) return [];
-  const h = Math.min((col.h - (n - 1) * gap) / n, (col.w * 4) / 3);
-  const totalH = n * h + (n - 1) * gap;
-  return Array.from({ length: n }, (_, i) => ({ x: col.x, y: col.y + (col.h - totalH) / 2 + i * (h + gap), w: col.w, h }));
-}
-
-/**
  * What content (if any) is on screen. Uses the server's `content` field; older states only
  * have `featuredScreen`.
  * @param {any} state @param {Map<string, any>} byId
@@ -107,24 +96,10 @@ export function computeLayout(state) {
       ? { key: `${content.pid}:screen`, pid: content.pid, kind: 'screen', fit: 'contain' }
       : { key: `content:${content.source}`, pid: null, kind: 'content', fit: 'contain', source: content.source };
     let layout = CONTENT_LAYOUTS.includes(state.studio.contentLayout) ? state.studio.contentLayout : 'sides';
-    if (!cams.length) layout = 'full';
+    if (!cams.length && layout !== 'pip') layout = 'full';
 
     if (layout === 'full') {
       tiles.push({ ...contentTile, rect: fit169(area) });
-      return tiles;
-    }
-    if (layout === 'pip') {
-      // Slot 1 sits in the top-left corner and the other guests stack down the right edge from
-      // the top, shrinking (no wider than 16:9) when there are many. The content fills the middle,
-      // centered between the two columns so it stays put as guests come and go. Guests to the
-      // right of the content have their name tags on the right of their video (`nameRight`).
-      const colW = 288, maxH = (colW * 3) / 4;
-      tiles.push({ ...contentTile, rect: fit169({ x: area.x + colW + GAP, y: area.y, w: area.w - 2 * (colW + GAP), h: area.h }) });
-      tiles.push({ ...cams[0], rect: { x: area.x, y: area.y, w: colW, h: maxH }, fit: 'cover', small: true });
-      const rest = cams.slice(1);
-      const h = Math.min(maxH, (area.h - (rest.length - 1) * GAP) / Math.max(1, rest.length));
-      const w = Math.min(colW, (h * 16) / 9);
-      rest.forEach((c, i) => tiles.push({ ...c, rect: { x: area.x + area.w - w, y: area.y + i * (h + GAP), w, h }, fit: 'cover', small: true, nameRight: true }));
       return tiles;
     }
     if (layout === 'right') {
@@ -133,14 +108,21 @@ export function computeLayout(state) {
       camTiles(columnRects(cams.length, { x: area.x + area.w - sideW, y: area.y, w: sideW, h: area.h }), cams, { nameRight: true });
       return tiles;
     }
-    // 'sides': content centered, guests split into a column on either side. The content stays
-    // centered (and the columns symmetric) whatever the guest count, so it doesn't jump around.
-    const perSide = Math.ceil(cams.length / 2);
-    const colW = perSide <= 2 ? 336 : perSide === 3 ? 300 : 240;
-    const left = cams.slice(0, perSide), right = cams.slice(perSide);
-    tiles.push({ ...contentTile, rect: fit169({ x: area.x + colW + GAP, y: area.y, w: area.w - 2 * (colW + GAP), h: area.h }) });
-    camTiles(sideColumnRects(left.length, { x: area.x, y: area.y, w: colW, h: area.h }), left);
-    camTiles(sideColumnRects(right.length, { x: area.x + area.w - colW, y: area.y, w: colW, h: area.h }), right, { nameRight: true });
+    // 'sides' and 'pip' share the guest placement: slot 1 sits in the top-left corner and the
+    // other guests stack down the right edge from the top, shrinking (no wider than 16:9) when
+    // there are many. Guests on the right have their name tags on the right of their video.
+    const colW = 288, maxH = (colW * 3) / 4;
+    const rest = cams.slice(1);
+    const h = Math.min(maxH, (area.h - (rest.length - 1) * GAP) / Math.max(1, rest.length));
+    const w = Math.min(colW, (h * 16) / 9);
+    const extra = layout === 'pip' ? { small: true } : {};
+    // 'pip': the content covers the whole frame and the guests sit on top of it.
+    // 'sides': the content fills the middle, centered between the two columns so it stays put
+    // as guests come and go.
+    tiles.push({ ...contentTile, rect: layout === 'pip' ? { x: 0, y: 0, w: REF_W, h: REF_H } : fit169({ x: area.x + colW + GAP, y: area.y, w: area.w - 2 * (colW + GAP), h: area.h }) });
+    if (!cams.length) return tiles;
+    camTiles([{ x: area.x, y: area.y, w: colW, h: maxH }], cams, extra);
+    camTiles(rest.map((_, i) => ({ x: area.x + area.w - w, y: area.y + i * (h + GAP), w, h })), rest, { ...extra, nameRight: true });
     return tiles;
   }
 
