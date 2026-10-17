@@ -30,7 +30,7 @@ const GUEST_LAYOUTS = [
 const CONTENT_LAYOUTS = [
   ['sides', 'Guests on sides', `<rect class="f" x="3" y="6" width="9" height="11" rx="1"/><rect class="f" x="3" y="19" width="9" height="11" rx="1"/><rect ${C} x="14" y="8" width="36" height="20" rx="1.5"/><rect class="f" x="52" y="6" width="9" height="11" rx="1"/><rect class="f" x="52" y="19" width="9" height="11" rx="1"/>`],
   ['right', 'Guests right', `<rect ${C} x="4" y="6" width="42" height="24" rx="2"/><rect class="f" x="48" y="8" width="12" height="7" rx="1"/><rect class="f" x="48" y="17" width="12" height="7" rx="1"/>`],
-  ['pip', 'Picture-in-picture', `<rect ${C} x="0" y="0" width="64" height="36"/><rect class="f" x="44" y="22" width="16" height="10" rx="1"/>`],
+  ['pip', 'Picture-in-picture', `<rect class="f" x="3" y="3" width="10" height="8" rx="1"/><rect ${C} x="15" y="8" width="34" height="20" rx="1.5"/><rect class="f" x="51" y="3" width="10" height="7" rx="1"/><rect class="f" x="51" y="12" width="10" height="7" rx="1"/><rect class="f" x="51" y="21" width="10" height="7" rx="1"/>`],
   ['full', 'Content only', `<rect ${C} x="6" y="4" width="52" height="28" rx="2"/>`],
 ];
 function buildLayouts() {

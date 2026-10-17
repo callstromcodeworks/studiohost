@@ -149,3 +149,25 @@ test('guests to the right of the content get their name tags on the right', () =
   // Without content, name tags stay on the left.
   assert.ok(computeLayout(studioState({ n: 4 })).every((t) => !t.nameRight));
 });
+
+test('"pip": slot 1 top-left, other guests stacked down the right from the top, nothing overlaps', () => {
+  for (let n = 1; n <= 8; n++) {
+    const tiles = computeLayout(studioState({ n, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } }));
+    const content = tiles.find((t) => t.kind === 'content');
+    const cams = tiles.filter((t) => t.kind === 'camera');
+    assert.equal(cams[0].pid, 'g0');
+    assert.ok(cams[0].rect.x + cams[0].rect.w <= content.rect.x, `slot 1 left of the content n=${n}`);
+    assert.ok(cams[0].rect.y < REF_H / 4, `slot 1 at the top n=${n}`);
+    const right = cams.slice(1);
+    for (const [i, t] of right.entries()) {
+      assert.ok(t.rect.x >= content.rect.x + content.rect.w, `guest right of the content n=${n}`);
+      if (i) assert.ok(t.rect.y > right[i - 1].rect.y, `stacked top to bottom n=${n}`);
+    }
+    if (right.length) assert.equal(right[0].rect.y, cams[0].rect.y, `right column starts at the top n=${n}`);
+    for (let i = 0; i < cams.length; i++) for (let j = i + 1; j < cams.length; j++) assert.ok(!overlap(cams[i].rect, cams[j].rect));
+  }
+  // The content stays put as guests come and go.
+  const r1 = obsContentRect(studioState({ n: 1, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } })).rect;
+  const r6 = obsContentRect(studioState({ n: 6, contentLayout: 'pip', content: { kind: 'obs', source: 'S' } })).rect;
+  assert.deepEqual(r1, r6);
+});

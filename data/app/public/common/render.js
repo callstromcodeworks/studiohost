@@ -107,19 +107,24 @@ export function computeLayout(state) {
       ? { key: `${content.pid}:screen`, pid: content.pid, kind: 'screen', fit: 'contain' }
       : { key: `content:${content.source}`, pid: null, kind: 'content', fit: 'contain', source: content.source };
     let layout = CONTENT_LAYOUTS.includes(state.studio.contentLayout) ? state.studio.contentLayout : 'sides';
-    if (!cams.length && layout !== 'pip') layout = 'full';
+    if (!cams.length) layout = 'full';
 
     if (layout === 'full') {
       tiles.push({ ...contentTile, rect: fit169(area) });
       return tiles;
     }
     if (layout === 'pip') {
-      tiles.push({ ...contentTile, rect: { x: 0, y: 0, w: REF_W, h: REF_H } });
-      // Small tiles stack up the right edge, shrinking when there are many. Guests to the right of
-    // the content have their name tags on the right of their video (`nameRight`).
-      const h = Math.min(216, (REF_H - 2 * MARGIN - (cams.length - 1) * GAP) / Math.max(1, cams.length));
-      const w = (h * 16) / 9;
-      cams.forEach((c, i) => tiles.push({ ...c, rect: { x: REF_W - MARGIN - w, y: REF_H - MARGIN - h - i * (h + GAP), w, h }, fit: 'cover', small: true, nameRight: true }));
+      // Slot 1 sits in the top-left corner and the other guests stack down the right edge from
+      // the top, shrinking (no wider than 16:9) when there are many. The content fills the middle,
+      // centered between the two columns so it stays put as guests come and go. Guests to the
+      // right of the content have their name tags on the right of their video (`nameRight`).
+      const colW = 288, maxH = (colW * 3) / 4;
+      tiles.push({ ...contentTile, rect: fit169({ x: area.x + colW + GAP, y: area.y, w: area.w - 2 * (colW + GAP), h: area.h }) });
+      tiles.push({ ...cams[0], rect: { x: area.x, y: area.y, w: colW, h: maxH }, fit: 'cover', small: true });
+      const rest = cams.slice(1);
+      const h = Math.min(maxH, (area.h - (rest.length - 1) * GAP) / Math.max(1, rest.length));
+      const w = Math.min(colW, (h * 16) / 9);
+      rest.forEach((c, i) => tiles.push({ ...c, rect: { x: area.x + area.w - w, y: area.y + i * (h + GAP), w, h }, fit: 'cover', small: true, nameRight: true }));
       return tiles;
     }
     if (layout === 'right') {
