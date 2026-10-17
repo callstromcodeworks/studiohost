@@ -405,8 +405,12 @@ try {
   const obs = await waitFor(async () => { const c = new ObsClient('ws://127.0.0.1:4455', ''); await c.connect(3000); return c; }, 60_000);
   if (!check(!!obs, 'connected to OBS over obs-websocket')) throw new Error('no obs-websocket');
 
-  const scenes = (await obs.call('GetSceneList')).scenes.map((s) => s.sceneName);
-  for (const name of ['Studio Host: Studio', 'Studio Host: Guest Screen Share', 'Studio Host: Guest 1']) {
+  // The plugin creates its scenes once OBS has finished loading, which can be a moment after
+  // obs-websocket starts answering, so give them a few seconds to appear.
+  const builtin = ['Studio Host: Studio', 'Studio Host: Guest Screen Share', 'Studio Host: Guest 1'];
+  const sceneNames = async () => (await obs.call('GetSceneList')).scenes.map((s) => s.sceneName);
+  const scenes = (await waitFor(async () => { const names = await sceneNames(); return builtin.every((n) => names.includes(n)) ? names : null; }, 15_000)) || (await sceneNames());
+  for (const name of builtin) {
     check(scenes.includes(name), `built-in scene "${name}" exists`);
   }
   const inputs = (await obs.call('GetInputList')).inputs;
