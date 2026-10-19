@@ -85,6 +85,7 @@ function makeCard(p) {
   const screenVideo = h('video.screen-thumb.hidden', { autoplay: true, muted: true, playsInline: true });
   const ini = h('div.ini');
   const name = h('div.p-name');
+  const headline = h('div.p-headline');
   const flags = h('div.p-flags');
   const stageBtn = h('button.btn.small.primary');
   const screenBtn = h('button.btn.small');
@@ -104,6 +105,10 @@ function makeCard(p) {
     h('label.check', { title: 'Heard by everyone, including backstage guests' }, hostChk, 'Producer (heard backstage)'),
     h('div.row.wrap', null,
       h('button.btn.small', { onclick: () => { const n = prompt('Display name', cur().name); if (n) act('rename', { participant: p.id, name: n }); } }, 'Rename'),
+      h('button.btn.small', { onclick: () => {
+        const t = prompt('Title shown under the name (e.g. Founder, Acme Co.). Leave empty for none.', cur().headline || '');
+        if (t !== null) act('headline', { participant: p.id, headline: t });
+      } }, 'Edit title'),
       h('button.btn.small', { onclick: () => { act('requestMedia', { participant: p.id, what: 'mic' }); toast('Asked to unmute'); } }, 'Ask to unmute'),
       h('button.btn.small', { onclick: () => { act('requestMedia', { participant: p.id, what: 'cam' }); toast('Asked to turn on camera'); } }, 'Ask for camera'),
       h('button.btn.small', { onclick: () => { setChatTo(p.id); showTab('chat'); } }, 'Message'),
@@ -111,7 +116,7 @@ function makeCard(p) {
   );
   const el = h('div.person.card', null,
     h('div.thumb', null, video, ini, screenVideo),
-    h('div.p-info', null, name, flags, h('div.p-actions', null, stageBtn, hideBtn, screenBtn, muteBtn, upBtn, downBtn, moreBtn)),
+    h('div.p-info', null, name, headline, flags, h('div.p-actions', null, stageBtn, hideBtn, screenBtn, muteBtn, upBtn, downBtn, moreBtn)),
     more);
   const cur = () => state.participants.find((x) => x.id === p.id) || p;
 
@@ -129,6 +134,7 @@ function makeCard(p) {
     el,
     update(/** @type {any} */ q) {
       name.textContent = q.name;
+      headline.textContent = q.headline || '';
       ini.textContent = initials(q.name);
       const flagList = [];
       if (q.isHost) flagList.push(['Producer', 'acc']);
@@ -267,6 +273,83 @@ function renderBanners() {
   const pos = $('#banner-pos');
   if (document.activeElement !== pos) pos.value = s.bannerPosition || 'bottom-left';
   $('#ticker-repeat').checked = s.tickerRepeat !== false;
+}
+
+// ---- presets --------------------------------------------------------------
+function renderPresets() {
+  const presets = state.studio.presets || [];
+  $('#preset-list').replaceChildren(...presets.map((pr, i) => {
+    const who = pr.stage.length ? pr.stage.join(', ') : 'nobody on stage';
+    return h('div.preset', null,
+      h('button.btn.small.recall', { title: `Recall: ${who}${i < 9 ? ` (OBS hotkey: Recall preset ${i + 1})` : ''}`, onclick: () => recallPreset(pr) }, pr.name),
+      h('button.btn.small.icon', { title: 'Save the current stage into this preset', onclick: () => {
+        if (confirm(`Replace "${pr.name}" with the current stage?`)) act('presetUpdate', { id: pr.id });
+      } }, '⟳'),
+      h('button.btn.small.icon', { title: 'Rename', onclick: () => { const n = prompt('Preset name', pr.name); if (n) act('presetRename', { id: pr.id, name: n }); } }, '✎'),
+      h('button.btn.small.icon', { title: 'Move earlier', onclick: () => act('presetMove', { id: pr.id, by: -1 }) }, icon('up')),
+      h('button.btn.small.icon', { title: 'Delete', onclick: () => { if (confirm(`Delete the preset "${pr.name}"?`)) act('presetDelete', { id: pr.id }); } }, icon('trash')));
+  }));
+  if (!presets.length) $('#preset-list').append(h('span.muted.small', null, 'Save the stage as it is now (layout, who is on stage, content, banner and ticker) to bring it back with one click.'));
+}
+/** @param {any} pr */
+async function recallPreset(pr) {
+  try { await client.action('presetRecall', { id: pr.id }); }
+  catch (e) { toast(e.message, { error: true }); return; }
+  // Guests are kept by name; say who the preset wanted but isn't here.
+  const here = new Set(state.participants.map((p) => p.name.trim().toLowerCase()));
+  const missing = pr.stage.filter((n) => !here.has(n.trim().toLowerCase()));
+  if (missing.length) toast(`Not in the studio: ${missing.join(', ')}`, { ms: 6000 });
+}
+
+// ---- timer ------------------------------------------------------------------
+function renderTimer() {
+  const t = state.studio.timer;
+  $('#timer-now').classList.toggle('hidden', !t);
+  $('#timer-start').textContent = t ? 'Start new timer' : 'Show timer';
+  const pos = $('#timer-pos');
+  if (document.activeElement !== pos) pos.value = state.studio.timerPosition || 'top-center';
+  if (!t) return;
+  $('#timer-pause').textContent = t.pausedAt ? 'Resume' : 'Pause';
+  for (const b of document.querySelectorAll('.timer-down')) b.classList.toggle('hidden', t.mode !== 'down');
+  tickTimer();
+}
+function tickTimer() {
+  const t = state?.studio.timer;
+  if (!t) return;
+  $('#timer-value').textContent = renderer.timerText(t);
+  const label = t.label ? `“${t.label}” · ` : '';
+  $('#timer-state').textContent = label + (t.pausedAt ? 'paused' : t.mode === 'down' ? 'counting down' : 'counting up');
+}
+function wireTimer() {
+  const mode = /** @type {HTMLSelectElement} */ ($('#timer-mode'));
+  const showFields = () => {
+    $('#timer-for').classList.toggle('hidden', mode.value !== 'for');
+    $('#timer-until').classList.toggle('hidden', mode.value !== 'until');
+  };
+  mode.addEventListener('change', showFields);
+  showFields();
+  $('#timer-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const label = $('#timer-label').value.trim();
+    if (mode.value === 'up') return act('timerStart', { mode: 'up', label });
+    if (mode.value === 'for') {
+      const seconds = (Number($('#timer-min').value) || 0) * 60 + (Number($('#timer-sec').value) || 0);
+      return act('timerStart', { mode: 'down', seconds, label });
+    }
+    const [hh, mm] = String($('#timer-until').value).split(':').map(Number);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) { toast('Pick the time to count down to.', { error: true }); return; }
+    const at = new Date();
+    at.setHours(hh, mm, 0, 0);
+    if (at.getTime() <= Date.now()) at.setDate(at.getDate() + 1); // a time earlier than now means tomorrow
+    // In the studio's clock, in case this device's clock is off.
+    act('timerStart', { mode: 'down', at: at.getTime() + renderer.clockOffset, label });
+  });
+  $('#timer-pause').addEventListener('click', () => act('timerPause', { on: !state.studio.timer?.pausedAt }));
+  $('#timer-plus').addEventListener('click', () => act('timerAdd', { seconds: 60 }));
+  $('#timer-minus').addEventListener('click', () => act('timerAdd', { seconds: -60 }));
+  $('#timer-hide').addEventListener('click', () => act('timerHide'));
+  $('#timer-pos').addEventListener('change', (e) => act('timerPosition', { position: e.target.value }));
+  setInterval(tickTimer, 250);
 }
 
 // ---- brand --------------------------------------------------------------
@@ -552,6 +635,8 @@ function render() {
   renderObs();
   renderPeople();
   renderBanners();
+  renderPresets();
+  renderTimer();
   renderBrand();
   renderMedia();
   renderWidgets();
@@ -562,6 +647,11 @@ async function main() {
   buildLayouts();
   $('#content-select').addEventListener('change', (/** @type {any} */ e) => onContentChange(e.target.value));
   wireBrand();
+  wireTimer();
+  $('#preset-save').addEventListener('click', () => {
+    const n = prompt('Name this preset (e.g. Intro, Interview, Q&A)', '');
+    if (n) act('presetSave', { name: n });
+  });
   $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { showTab(b.dataset.tab); if (b.dataset.tab === 'setup') renderSetup(); } });
   $('#widget-form').addEventListener('submit', async (e) => {
     e.preventDefault();

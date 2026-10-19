@@ -3,12 +3,13 @@
 // that video and audio actually flow. Requires Playwright with Chromium:
 //   npm i -D playwright && npx playwright install chromium
 //   node test/e2e.mjs
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { BLUR_FILES } from '../data/app/public/guest/blur.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -64,6 +65,7 @@ try {
   for (const name of ['Ada Lovelace', 'Grace Hopper']) {
     const g = await open(`https://localhost:${PUB}/guest/?k=${config.guestKey}`, name);
     await g.fill('#name', name);
+    if (name === 'Ada Lovelace') await g.fill('#headline', 'Mathematician');
     await g.waitForFunction(() => document.querySelector('#lobby-video')?.srcObject?.getTracks().length >= 2);
     await g.click('#join');
     guests.push(g);
@@ -82,6 +84,10 @@ try {
   // Bring Ada on stage.
   await host.locator('.person', { hasText: 'Ada Lovelace' }).locator('button', { hasText: 'Add to stage' }).click();
   check(await waitFor(() => program.evaluate(() => window.studioHost.client.state?.stage.length === 1)), 'Ada is on stage');
+
+  // Ada's title is shown under her name: in the dock, the program state and her slot output.
+  check(await waitFor(() => host.evaluate(() => [...document.querySelectorAll('.p-headline')].some((el) => el.textContent === 'Mathematician'))), 'dock shows the guest’s title');
+  check(await waitFor(() => slot.evaluate(() => document.querySelector('#headline').textContent === 'Mathematician')), 'slot output name tag shows the title');
 
   // Program receives Ada's camera.
   check(await waitFor(() => program.evaluate(() => {
@@ -201,10 +207,42 @@ try {
   await host.check('#ticker-repeat');
   await host.locator('#banner-list .item', { hasText: 'Breaking' }).locator('button', { hasText: 'Hide' }).click();
 
+  // Timer: a two-minute countdown, top center, which pauses and takes an extra minute.
+  await host.fill('#timer-min', '2');
+  await host.fill('#timer-sec', '0');
+  await host.fill('#timer-label', 'Back in');
+  await host.click('#timer-start');
+  check(await waitFor(() => program.evaluate(() => {
+    const r = window.studioHost.renderer, t = window.studioHost.client.state.studio.timer;
+    return t?.label === 'Back in' && /^(2:00|1:5\d)$/.test(r.timerText(t)) && r.overlays?.some((o) => o.y < 200 && Math.abs(o.x + o.w / 2 - 960) < 2);
+  })), 'countdown timer shows at the top center of the program');
+  await host.click('#timer-pause');
+  await host.click('#timer-plus');
+  check(await waitFor(() => host.evaluate(() => /^(3:00|2:5\d)$/.test(document.querySelector('#timer-value').textContent) && document.querySelector('#timer-pause').textContent === 'Resume')), 'timer pauses and takes an extra minute');
+  const paused = await program.evaluate(() => window.studioHost.renderer.timerText(window.studioHost.client.state.studio.timer));
+  await sleep(1500);
+  check(paused === await program.evaluate(() => window.studioHost.renderer.timerText(window.studioHost.client.state.studio.timer)), 'a paused timer stands still');
+  await program.screenshot({ path: join(SHOTS, 'timer.png') });
+  await host.click('#timer-hide');
+  check(await waitFor(() => program.evaluate(() => !window.studioHost.client.state.studio.timer)), 'timer hidden');
+
   // Layout switch + second guest on stage.
   await host.locator('.person', { hasText: 'Grace Hopper' }).locator('button', { hasText: 'Add to stage' }).click();
   await host.click('#layouts button[data-layout="spotlight"]');
   check(await waitFor(() => program.evaluate(() => window.studioHost.client.state.studio.layout === 'spotlight' && window.studioHost.client.state.stage.length === 2)), 'layout set to spotlight with two on stage');
+
+  // Presets: save this stage, change it, and bring it back with one click.
+  host.once('dialog', (d) => d.accept('Interview'));
+  await host.click('#preset-save');
+  check(await waitFor(() => host.evaluate(() => document.querySelector('#preset-list .recall')?.textContent === 'Interview')), 'preset saved');
+  await host.locator('.person', { hasText: 'Grace Hopper' }).locator('button', { hasText: 'Remove' }).first().click();
+  await host.click('#layouts button[data-layout="solo"]');
+  check(await waitFor(() => program.evaluate(() => window.studioHost.client.state.stage.length === 1)), 'stage changed');
+  await host.click('#preset-list .recall');
+  check(await waitFor(() => program.evaluate(() => {
+    const st = window.studioHost.client.state;
+    return st.studio.layout === 'spotlight' && st.stage.map((id) => st.participants.find((p) => p.id === id)?.name).join() === 'Ada Lovelace,Grace Hopper';
+  })), 'recalling the preset restores the layout and who is on stage');
 
   // Screen share (may be unavailable in headless environments).
   const shared = await ada.evaluate(async () => {
@@ -266,6 +304,37 @@ try {
   await sleep(500);
   check(!(await ada.evaluate(() => document.querySelector('#chat-log').textContent.includes('Private note for Grace'))), 'other guest does not see the private message');
 
+  // Background blur: a guest turns it on in the lobby. The MediaPipe files come from a local
+  // copy (BLUR_FILES_DIR, or fetched from npm and Google's model storage here).
+  const blurDir = blurFiles();
+  if (blurDir) {
+    await ctx.route(/^https:\/\/(cdn\.jsdelivr\.net|storage\.googleapis\.com)\//, (route) => {
+      const file = Object.values(BLUR_FILES).find((f) => f.url === route.request().url());
+      if (!file) return route.abort();
+      return route.fulfill({ body: readFileSync(join(blurDir, file.url.split('/').pop())), contentType: file.type, headers: { 'Access-Control-Allow-Origin': '*' } });
+    });
+    const blurry = await open(`https://localhost:${PUB}/guest/?k=${config.guestKey}`, 'Blur Guest');
+    await blurry.fill('#name', 'Blur Guest');
+    await blurry.check('#blur');
+    check(await waitFor(() => blurry.evaluate(() => {
+      const b = window.studioHost.blur, v = document.querySelector('#lobby-video');
+      return !!b?.hasMask && v.srcObject?.getVideoTracks()[0] === b.output && v.videoWidth > 0;
+    }), 30000), 'blur turns the camera into a blurred track');
+    console.log(`INFO  segmenter labels: ${await blurry.evaluate(() => JSON.stringify(window.studioHost.blur.labels))}, mask ${await blurry.evaluate(() => window.studioHost.blur.maskIndex)}`);
+    await blurry.click('#join');
+    check(await waitFor(() => program.evaluate(() => {
+      const p = window.studioHost.client.state.participants.find((x) => x.name === 'Blur Guest');
+      const v = p && window.studioHost.bank.video(p.id, 'camera');
+      return !!v && v.videoWidth > 0;
+    }), 20000), 'the program receives the blurred camera');
+    await blurry.evaluate(() => { const b = document.querySelector('#blur-2'); b.checked = false; b.dispatchEvent(new Event('change')); });
+    check(await waitFor(() => blurry.evaluate(() => !window.studioHost.blur && !!document.querySelector('#self-video').srcObject?.getVideoTracks()[0]?.getSettings().deviceId)), 'turning blur off sends the camera as it is');
+    await blurry.screenshot({ path: join(SHOTS, 'guest-blur.png') });
+    await blurry.close();
+  } else {
+    console.log('SKIP  background blur (MediaPipe files unavailable)');
+  }
+
   // Upload a logo (generated PNG) and set it.
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==', 'base64');
   mkdirSync(join(data, 'tmp'), { recursive: true });
@@ -300,4 +369,22 @@ try {
   server.kill();
 }
 console.log(fails.length ? `\n${fails.length} failure(s)` : '\nAll checks passed');
+
+/** A folder with the background blur files (see BLUR_FILES), or null if they can't be had. */
+function blurFiles() {
+  let dir = process.env.BLUR_FILES_DIR;
+  if (dir) return dir;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'studiohost-blur-'));
+    const version = BLUR_FILES.bundle.url.match(/@([\d.]+)\//)[1];
+    const tgz = execFileSync('npm', ['pack', `@mediapipe/tasks-vision@${version}`, '--silent', '--pack-destination', dir], { encoding: 'utf8' }).trim();
+    execFileSync('tar', ['xzf', join(dir, tgz), '-C', dir, '--strip-components=1', 'package/vision_bundle.mjs', 'package/wasm/vision_wasm_internal.js', 'package/wasm/vision_wasm_internal.wasm']);
+    for (const f of ['vision_wasm_internal.js', 'vision_wasm_internal.wasm']) execFileSync('mv', [join(dir, 'wasm', f), join(dir, f)]);
+    execFileSync('curl', ['-sSfL', '-o', join(dir, BLUR_FILES.model.url.split('/').pop()), BLUR_FILES.model.url]);
+    return existsSync(join(dir, 'vision_wasm_internal.wasm')) ? dir : null;
+  } catch (err) {
+    console.log(`INFO  could not fetch the blur files: ${err.message}`);
+    return null;
+  }
+}
 process.exit(fails.length ? 1 : 0);

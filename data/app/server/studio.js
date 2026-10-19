@@ -32,6 +32,20 @@ const STATE_PATH = join(DATA_DIR, 'state.json');
 const RECONNECT_GRACE_MS = 15_000;
 const CHAT_HISTORY = 200;
 const TICKER_MIN = 40, TICKER_MAX = 600; // ticker speed range, pixels per second
+const TIMER_MAX_SECONDS = 24 * 3600;
+const MAX_PRESETS = 24;
+
+/**
+ * The on-screen timer. A countdown runs to `endsAt`; a count-up runs from `startedAt`. While
+ * paused, `pausedAt` is when it was paused (resuming moves both on by the time spent paused).
+ * @typedef {{mode: 'down'|'up', label: string, endsAt: number, startedAt: number, pausedAt: number|null}} Timer
+ * A saved stage setup. Guests are kept by name, since a guest who rejoins gets a new id.
+ * @typedef {{
+ *   id: string, name: string, layout: string, contentLayout: string, showNames: boolean, stage: string[],
+ *   content: {kind: 'none'} | {kind: 'screen', name: string} | {kind: 'obs', source: string},
+ *   banner: string|null, ticker: string|null,
+ * }} Preset
+ */
 
 /**
  * @typedef {'guest'|'host'|'program'|'slot'|'feature'} Role
@@ -43,7 +57,7 @@ const TICKER_MIN = 40, TICKER_MAX = 600; // ticker speed range, pixels per secon
  *   dropTimer: NodeJS.Timeout|null, remote: boolean, everConnected: boolean, lastDiagLog?: number,
  * }} Client
  * @typedef {{
- *   id: string, name: string, isHost: boolean, onStage: boolean, slot: number|null,
+ *   id: string, name: string, headline: string, isHost: boolean, onStage: boolean, slot: number|null,
  *   volume: number, programAudio: boolean, hostMuted: boolean, hidden: boolean,
  *   cam: boolean, mic: boolean, screen: boolean,
  *   streams: {camera: string|null, screen: string|null}, joinedAt: number,
@@ -74,6 +88,9 @@ function defaultStudio() {
     tickerSpeed: 140,        // pixels per second on the 1920-wide frame
     tickerRepeat: true,      // false: one copy of the text crosses the screen at a time
     bannerPosition: 'bottom-left',
+    timer: /** @type {Timer|null} */ (null),
+    timerPosition: 'top-center',
+    presets: /** @type {Preset[]} */ ([]),
     /**
      * Web widgets (Streamlabs/StreamElements alerts, goals, event lists) the plugin adds to the
      * Studio scene as OBS Browser Sources. URLs carry account tokens, so pages only get id, name
@@ -171,7 +188,7 @@ export class Studio {
 
     if (role === 'guest') {
       this.participants.set(client.id, {
-        id: client.id, name: client.name, isHost, onStage: false,
+        id: client.id, name: client.name, headline: '', isHost, onStage: false,
         slot: this.firstFreeSlot(), volume: 1, programAudio: true, hostMuted: false, hidden: false,
         cam: false, mic: false, screen: false, streams: { camera: null, screen: null }, joinedAt: Date.now(),
       });
@@ -357,6 +374,8 @@ export class Studio {
       featuredScreen: this.featuredScreen,
       content: this.contentState(),
       clip: this.clip,
+      /** The server's clock, so pages can show the timer in step with the program. */
+      now: Date.now(),
       programOnline: !!this.programClientId && !!this.clients.get(this.programClientId)?.conn,
       hosts: [...this.clients.values()].filter((c) => c.role === 'host').length,
       slotPages: [...this.clients.values()].filter((c) => c.role === 'slot').map((c) => c.slot),
@@ -438,6 +457,7 @@ export class Studio {
     const p = this.participants.get(client.id);
     if (!p) return;
     if (typeof body.name === 'string' && cleanText(body.name, 40)) p.name = client.name = cleanText(body.name, 40);
+    if (typeof body.headline === 'string') p.headline = cleanText(body.headline, 60);
     for (const k of /** @type {const} */ (['cam', 'mic', 'screen'])) if (typeof body[k] === 'boolean') p[k] = body[k];
     if (body.streams && typeof body.streams === 'object') {
       p.streams = { camera: cleanId(body.streams.camera), screen: cleanId(body.streams.screen) };
@@ -457,6 +477,12 @@ export class Studio {
     const s = this.studio;
     const p = typeof a.participant === 'string' ? this.participants.get(a.participant) : undefined;
     const needP = () => { if (!p) throw new UserError('unknown participant'); return p; };
+    const needTimer = () => { if (!s.timer) throw new UserError('no timer is showing'); return s.timer; };
+    const needPreset = () => {
+      const preset = s.presets.find((x) => x.id === a.id);
+      if (!preset) throw new UserError('unknown preset');
+      return preset;
+    };
     try {
       switch (a.action) {
         case 'stage': {
@@ -511,6 +537,7 @@ export class Studio {
         case 'programAudio': needP().programAudio = !!a.on; break;
         case 'markHost': needP().isHost = !!a.on; break;
         case 'rename': { const q = needP(); const n = cleanText(a.name, 40); if (n) q.name = n; break; }
+        case 'headline': needP().headline = cleanText(a.headline, 60); break;
         case 'slot': {
           const q = needP();
           if (a.slot === null) { q.slot = null; break; }
@@ -577,6 +604,73 @@ export class Studio {
           if (!BANNER_POSITIONS.includes(a.position)) throw new UserError('unknown banner position');
           s.bannerPosition = a.position;
           break;
+        case 'timerStart': {
+          const label = cleanText(a.label, 60);
+          const now = Date.now();
+          if (a.mode === 'up') { s.timer = { mode: 'up', label, startedAt: now, endsAt: 0, pausedAt: null }; break; }
+          if (a.mode !== 'down') throw new UserError('unknown timer');
+          let endsAt;
+          if (a.at !== undefined) {
+            endsAt = Number(a.at);
+            if (!Number.isFinite(endsAt) || endsAt <= now) throw new UserError('that time has already passed');
+            if (endsAt - now > TIMER_MAX_SECONDS * 1000) throw new UserError('a countdown can run for up to 24 hours');
+          } else {
+            const secs = Math.round(Number(a.seconds));
+            if (!Number.isFinite(secs) || secs < 1) throw new UserError('enter how long to count down');
+            if (secs > TIMER_MAX_SECONDS) throw new UserError('a countdown can run for up to 24 hours');
+            endsAt = now + secs * 1000;
+          }
+          s.timer = { mode: 'down', label, startedAt: now, endsAt, pausedAt: null };
+          break;
+        }
+        case 'timerPause': {
+          const t = needTimer();
+          if (!a.on && t.pausedAt !== null) {
+            const paused = Date.now() - t.pausedAt;
+            t.endsAt += paused; t.startedAt += paused; t.pausedAt = null;
+          } else if (a.on && t.pausedAt === null) t.pausedAt = Date.now();
+          break;
+        }
+        case 'timerAdd': {
+          // Adds (or with a negative number, takes off) time on a countdown.
+          const t = needTimer();
+          if (t.mode !== 'down') throw new UserError('only a countdown can have time added');
+          const now = t.pausedAt ?? Date.now();
+          t.endsAt = Math.min(now + TIMER_MAX_SECONDS * 1000, Math.max(now, t.endsAt + clampInt(a.seconds, -TIMER_MAX_SECONDS, TIMER_MAX_SECONDS, 0) * 1000));
+          break;
+        }
+        case 'timerLabel': needTimer().label = cleanText(a.label, 60); break;
+        case 'timerHide': s.timer = null; break;
+        case 'timerPosition':
+          if (!BANNER_POSITIONS.includes(a.position)) throw new UserError('unknown timer position');
+          s.timerPosition = a.position;
+          break;
+        case 'presetSave': {
+          const name = cleanText(a.name, 40);
+          if (!name) throw new UserError('give the preset a name');
+          if (s.presets.length >= MAX_PRESETS) throw new UserError(`you can save up to ${MAX_PRESETS} presets`);
+          s.presets.push({ id: randomUUID(), name, ...this.snapshot() });
+          break;
+        }
+        case 'presetUpdate': {
+          const preset = needPreset();
+          Object.assign(preset, this.snapshot());
+          break;
+        }
+        case 'presetRename': {
+          const preset = needPreset();
+          const name = cleanText(a.name, 40);
+          if (!name) throw new UserError('give the preset a name');
+          preset.name = name;
+          break;
+        }
+        case 'presetMove': {
+          const i = s.presets.indexOf(needPreset()), j = i + (Number(a.by) < 0 ? -1 : 1);
+          if (j >= 0 && j < s.presets.length) [s.presets[i], s.presets[j]] = [s.presets[j], s.presets[i]];
+          break;
+        }
+        case 'presetDelete': s.presets = s.presets.filter((x) => x.id !== a.id); break;
+        case 'presetRecall': this.recall(needPreset()); break;
         case 'widgetSave': {
           const name = cleanText(a.name, 60);
           if (!name) throw new UserError('give the widget a name');
@@ -612,15 +706,63 @@ export class Studio {
       throw err;
     }
     this.save();
-    if (['slot', 'slots', 'featureScreen', 'content', 'kick'].includes(a.action)) this.relink(); // content can change the screen target
+    if (['slot', 'slots', 'featureScreen', 'content', 'kick', 'presetRecall'].includes(a.action)) this.relink(); // content can change the screen target
     if (a.action === 'slots') this.onSlots?.(s.slots);
     this.broadcastState();
     return null;
   }
 
+  /** The stage as it is now, for a preset. @returns {Omit<Preset, 'id'|'name'>} */
+  snapshot() {
+    const s = this.studio;
+    const name = (/** @type {string} */ id) => this.participants.get(id)?.name || '';
+    const content = this.contentState();
+    return {
+      layout: s.layout, contentLayout: s.contentLayout, showNames: s.showNames,
+      stage: this.stage.map(name).filter(Boolean),
+      content: content?.kind === 'screen' ? { kind: 'screen', name: name(content.pid) }
+        : content?.kind === 'obs' || s.obsContent ? { kind: 'obs', source: /** @type {string} */ (s.obsContent) }
+        : { kind: 'none' },
+      banner: s.activeBanner, ticker: s.activeTicker,
+    };
+  }
+
+  /**
+   * Puts a preset on stage: its layouts, banner and ticker, its content, and the guests it
+   * names (in its order; guests it doesn't name go backstage). Guests who aren't in the studio
+   * are skipped.
+   * @param {Preset} preset
+   */
+  recall(preset) {
+    const s = this.studio;
+    if (GUEST_LAYOUTS.includes(preset.layout)) s.layout = preset.layout;
+    if (CONTENT_LAYOUTS.includes(preset.contentLayout)) s.contentLayout = preset.contentLayout;
+    s.showNames = preset.showNames !== false;
+    s.activeBanner = s.banners.some((b) => b.id === preset.banner && !b.ticker) ? preset.banner : null;
+    s.activeTicker = s.banners.some((b) => b.id === preset.ticker && b.ticker) ? preset.ticker : null;
+    const free = [...this.participants.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+    const byName = (/** @type {string} */ n) => {
+      const i = free.findIndex((p) => p.name.trim().toLowerCase() === n.trim().toLowerCase());
+      return i < 0 ? null : free.splice(i, 1)[0];
+    };
+    /** @type {Participant[]} */
+    const onStage = [];
+    for (const n of preset.stage || []) { const p = byName(n); if (p) onStage.push(p); }
+    for (const p of this.participants.values()) p.onStage = onStage.includes(p);
+    this.stage = onStage.map((p) => p.id);
+    const c = preset.content || { kind: 'none' };
+    this.featuredScreen = null;
+    s.obsContent = null;
+    if (c.kind === 'obs') s.obsContent = c.source;
+    else if (c.kind === 'screen') {
+      const sharer = [...this.participants.values()].find((p) => p.screen && p.name.trim().toLowerCase() === c.name.trim().toLowerCase());
+      if (sharer) this.featuredScreen = sharer.id;
+    }
+  }
+
   /**
    * Acts on an OBS hotkey (see studio-hotkeys.cpp). Returns an error string, or null.
-   * @param {string} action @param {number} slot guest slot, for the per-guest hotkeys
+   * @param {string} action @param {number} slot guest slot for the per-guest hotkeys, preset number for 'preset'
    * @returns {string|null}
    */
   hotkey(action, slot) {
@@ -646,6 +788,13 @@ export class Studio {
         const ticker = s.banners.find((b) => b.ticker);
         return ticker ? this.hostAction(null, { action: 'bannerShow', id: ticker.id }) : 'there is no ticker';
       }
+      case 'preset': {
+        const preset = s.presets[slot - 1];
+        return preset ? this.hostAction(null, { action: 'presetRecall', id: preset.id }) : `there is no preset ${slot}`;
+      }
+      case 'timer':
+        if (!s.timer) return 'no timer is showing';
+        return this.hostAction(null, { action: 'timerPause', on: s.timer.pausedAt === null });
       case 'nextLayout': {
         // Whichever layout family is in use: with content, or guests only.
         const list = this.contentState() ? CONTENT_LAYOUTS : GUEST_LAYOUTS;

@@ -2,6 +2,7 @@
 import { StudioClient, param } from '../common/client.js';
 import { manageLinks, applyEncoding } from '../common/peer.js';
 import { $, h, icon, toast, appendChat } from '../common/ui.js';
+import { BackgroundBlur, blurSupported } from './blur.js';
 
 const KEY = param('k') || '';
 // Optional caps on what this guest sends, in kbps (?maxv=600&maxa=24). Useful for guests on
@@ -11,6 +12,8 @@ const MAX_VIDEO = capKbps('maxv'), MAX_AUDIO = capKbps('maxa');
 const camBitrate = Math.min(2_500_000, MAX_VIDEO);
 const AS_HOST = param('host') === '1';
 const NAME_KEY = 'studiohost.name';
+const HEADLINE_KEY = 'studiohost.headline';
+const BLUR_KEY = 'studiohost.blur';
 const DEV_KEY = 'studiohost.devices';
 // Lets this guest back in after a dropped connection, even once the invite link has changed.
 const TICKET_KEY = 'studiohost.rejoin';
@@ -19,13 +22,18 @@ const storedTicket = () => { try { return sessionStorage.getItem(TICKET_KEY) || 
 const storeTicket = (t) => { try { if (t) sessionStorage.setItem(TICKET_KEY, t); else sessionStorage.removeItem(TICKET_KEY); } catch { /* ignore */ } };
 
 const client = new StudioClient('guest');
-/** @type {any} */ (window).studioHost = { client, get links() { return links; } };
+/** @type {any} */ (window).studioHost = { client, get links() { return links; }, get blur() { return blur; } };
 
 // Outgoing media. camStream keeps a stable id for the whole session so the
 // studio can tell which incoming stream is the camera; tracks are swapped in place.
 const camStream = new MediaStream();
 /** @type {MediaStream|null} */ let screenStream = null;
 let camOn = true, micOn = true;
+/** The camera's own track. With blur on, camStream carries the blurred track made from it. @type {MediaStreamTrack|null} */
+let cameraTrack = null;
+/** @type {BackgroundBlur|null} */ let blur = null;
+/** The camera track a pending blur is being started for. @type {MediaStreamTrack|null} */ let pendingCamera = null;
+let blurOn = blurSupported() && stored(BLUR_KEY) === '1';
 /** @type {{cam?: string, mic?: string, spk?: string}} */
 let devices = loadDevices();
 /** @type {Map<string, import('../common/peer.js').PeerLink>} */ let links = new Map();
@@ -34,6 +42,10 @@ let joined = false;
 const videoTrack = () => camStream.getVideoTracks()[0] || null;
 const audioTrack = () => camStream.getAudioTracks()[0] || null;
 
+/** @param {string} key */
+function stored(key) { try { return localStorage.getItem(key) || ''; } catch { return ''; } }
+/** @param {string} key @param {string} value */
+function store(key, value) { try { localStorage.setItem(key, value); } catch { /* ignore */ } }
 function loadDevices() { try { return JSON.parse(localStorage.getItem(DEV_KEY) || '{}'); } catch { return {}; } }
 function saveDevices() { try { localStorage.setItem(DEV_KEY, JSON.stringify(devices)); } catch { /* ignore */ } }
 
@@ -48,16 +60,76 @@ async function capture(want) {
 }
 
 /** Replaces camera/mic tracks in camStream and on every peer connection. @param {MediaStream} fresh */
-function adoptTracks(fresh) {
-  for (const t of fresh.getTracks()) {
-    const old = t.kind === 'video' ? videoTrack() : audioTrack();
+async function adoptTracks(fresh) {
+  const audio = fresh.getAudioTracks()[0];
+  if (audio) {
+    const old = audioTrack();
     if (old) { camStream.removeTrack(old); old.stop(); }
-    t.enabled = t.kind === 'video' ? camOn : micOn;
-    camStream.addTrack(t);
+    audio.enabled = micOn;
+    camStream.addTrack(audio);
+    watchLevel();
   }
+  const video = fresh.getVideoTracks()[0];
+  if (video) await setCamera(video);
   for (const link of links.values()) pushTracks(link);
-  watchLevel();
   if (joined) reportSelf();
+}
+
+/**
+ * Puts a camera track in camStream: as it is, or blurred when blur is on. With blur on, the
+ * camera is only shown once the blurred picture is ready (until then the previous picture
+ * stays), so the room never shows unblurred.
+ * @param {MediaStreamTrack} camera
+ */
+async function setCamera(camera) {
+  pendingCamera = camera;
+  /** @type {MediaStreamTrack} */ let track = camera;
+  /** @type {BackgroundBlur|null} */ let next = null;
+  if (blurOn) {
+    next = new BackgroundBlur();
+    renderBlur('Starting background blur…');
+    try { track = await next.start(camera); }
+    catch (e) {
+      next.stop();
+      if (pendingCamera !== camera) { if (camera !== cameraTrack) camera.stop(); return; }
+      next = null;
+      blurOn = false;
+      store(BLUR_KEY, '0');
+      toast(`Background blur could not start: ${e.message}`, { error: true, ms: 8000 });
+    }
+    if (pendingCamera !== camera) { next?.stop(); if (camera !== cameraTrack) camera.stop(); return; } // replaced meanwhile
+  }
+  pendingCamera = null;
+  const old = videoTrack();
+  if (old) camStream.removeTrack(old);
+  blur?.stop();
+  blur = next;
+  if (cameraTrack && cameraTrack !== camera) cameraTrack.stop();
+  cameraTrack = camera;
+  camera.enabled = camOn;
+  track.enabled = camOn;
+  camStream.addTrack(track);
+  for (const link of links.values()) pushTracks(link);
+  renderBlur();
+}
+
+/** @param {boolean} on */
+async function setBlur(on) {
+  blurOn = on;
+  store(BLUR_KEY, on ? '1' : '0');
+  if (cameraTrack) await setCamera(cameraTrack);
+  else renderBlur();
+}
+
+/** @param {string} [busy] what's happening, while blur is starting */
+function renderBlur(busy = '') {
+  for (const [row, box] of [['#blur-row', '#blur'], ['#blur-row-2', '#blur-2']]) {
+    $(row).classList.toggle('hidden', !blurSupported());
+    const el = /** @type {HTMLInputElement} */ ($(box));
+    el.checked = blurOn;
+    el.disabled = !!busy;
+    el.parentElement.title = busy || 'Blurs what’s behind you. The first time, about 14 MB is downloaded.';
+  }
 }
 
 async function startDevices() {
@@ -71,12 +143,12 @@ async function startDevices() {
     return;
   }
   try {
-    adoptTracks(await capture({ video: true, audio: true }));
+    await adoptTracks(await capture({ video: true, audio: true }));
   } catch (e1) {
     // Fall back to whatever is available (e.g. no camera).
     let partial = null;
     try { partial = await capture({ video: false, audio: true }); camOn = false; } catch { /* none */ }
-    if (partial) adoptTracks(partial);
+    if (partial) await adoptTracks(partial);
     err.textContent = partial
       ? 'No camera available — you can still join with audio.'
       : `Could not access your camera or microphone (${e1.name}). Check browser permissions, then reload.`;
@@ -98,7 +170,7 @@ async function fillDeviceLists() {
       sel.disabled = !list.length;
     }
   };
-  fill(['#cam-select', '#cam-select-2'], 'videoinput', videoTrack()?.getSettings().deviceId, 'Camera');
+  fill(['#cam-select', '#cam-select-2'], 'videoinput', cameraTrack?.getSettings().deviceId, 'Camera');
   fill(['#mic-select', '#mic-select-2'], 'audioinput', audioTrack()?.getSettings().deviceId, 'Microphone');
   fill(['#spk-select'], 'audiooutput', devices.spk, 'Speaker');
   $('#spk-select').closest('label').classList.toggle('hidden', !('setSinkId' in HTMLMediaElement.prototype) || !all.some((d) => d.kind === 'audiooutput'));
@@ -109,7 +181,7 @@ async function switchDevice(kind, deviceId) {
   devices[kind] = deviceId;
   saveDevices();
   try {
-    adoptTracks(await capture(kind === 'cam' ? { video: true } : { audio: true }));
+    await adoptTracks(await capture(kind === 'cam' ? { video: true } : { audio: true }));
     await fillDeviceLists();
   } catch (e) {
     toast(`Could not switch ${kind === 'cam' ? 'camera' : 'microphone'}: ${e.message}`, { error: true });
@@ -160,6 +232,7 @@ function pushTracks(link) {
 
 function reportSelf() {
   return client.post('self', {
+    headline: $('#headline').value.trim(),
     cam: camOn && !!videoTrack(), mic: micOn && !!audioTrack(), screen: !!screenStream,
     streams: { camera: camStream.id, screen: screenStream?.id || null },
   }).catch(() => {});
@@ -195,11 +268,12 @@ function toggleMic() {
 async function toggleCam() {
   camOn = !camOn;
   if (camOn && !videoTrack()) {
-    try { adoptTracks(await capture({ video: true })); }
+    try { await adoptTracks(await capture({ video: true })); }
     catch (e) { camOn = false; toast(`Could not start camera: ${e.message}`, { error: true }); }
   }
   const v = videoTrack();
   if (v) v.enabled = camOn;
+  if (cameraTrack) cameraTrack.enabled = camOn;
   renderToggles();
   if (joined) reportSelf();
 }
@@ -234,7 +308,8 @@ function stopShare() {
 async function join() {
   const name = $('#name').value.trim();
   if (!name) { $('#name').focus(); toast('Please enter your name', { error: true }); return; }
-  try { localStorage.setItem(NAME_KEY, name); } catch { /* ignore */ }
+  store(NAME_KEY, name);
+  store(HEADLINE_KEY, $('#headline').value.trim());
   $('#join').disabled = true;
   $('#join').textContent = 'Joining…';
   try {
@@ -255,6 +330,7 @@ async function join() {
   $('#self-video').srcObject = camStream;
   $('#self-name').textContent = name;
   $('#name-2').value = name;
+  $('#headline-2').value = $('#headline').value.trim();
   // Chat sits beside the picture on wide screens, so keep it open there from the start.
   if (matchMedia('(min-width: 761px)').matches) $('#chat').classList.remove('hidden');
 
@@ -399,6 +475,8 @@ function end(title, text) {
   client.disconnect();
   for (const l of links.values()) l.close();
   for (const t of camStream.getTracks()) t.stop();
+  blur?.stop();
+  cameraTrack?.stop();
   screenStream?.getTracks().forEach((t) => t.stop());
   $('#studio').classList.add('hidden');
   $('#lobby').classList.add('hidden');
@@ -408,7 +486,8 @@ function end(title, text) {
 }
 
 // ---- wire up ----------------------------------------------------------
-$('#name').value = (() => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } })();
+$('#name').value = stored(NAME_KEY);
+$('#headline').value = stored(HEADLINE_KEY);
 $('#lobby-video').srcObject = camStream;
 $('#lobby-mic').addEventListener('click', toggleMic);
 $('#lobby-cam').addEventListener('click', toggleCam);
@@ -426,9 +505,16 @@ $('#spk-select').addEventListener('change', (e) => {
 $('#name-2').addEventListener('change', (e) => {
   const name = e.target.value.trim();
   if (!name) return;
-  try { localStorage.setItem(NAME_KEY, name); } catch { /* ignore */ }
+  store(NAME_KEY, name);
   client.post('self', { name }).catch(() => {});
 });
+$('#headline-2').addEventListener('change', (e) => {
+  const headline = e.target.value.trim();
+  $('#headline').value = headline;
+  store(HEADLINE_KEY, headline);
+  client.post('self', { headline }).catch(() => {});
+});
+for (const id of ['#blur', '#blur-2']) $(id).addEventListener('change', (e) => setBlur(e.target.checked));
 $('#chat-btn').replaceChildren(icon('chat'), 'Chat');
 $('#settings-btn').replaceChildren(icon('gear'), 'Settings');
 $('#leave').replaceChildren(icon('leave'), 'Leave');
@@ -453,4 +539,5 @@ if (!KEY) {
   $('#lobby-error').classList.remove('hidden');
 }
 renderToggles();
+renderBlur();
 startDevices().then(() => requestAnimationFrame(meterLoop));

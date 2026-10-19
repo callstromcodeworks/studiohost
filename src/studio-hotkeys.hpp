@@ -31,7 +31,8 @@ class ServerProcess;
 
 // Producer actions as OBS hotkeys (Settings → Hotkeys, under "Studio Host: ..."), so a keyboard
 // or a Stream Deck can run the show: bring guest N on or off stage, mute guest N, show the next
-// banner, hide the banner, show or hide the ticker, switch to the next layout. A press is sent
+// banner, hide the banner, show or hide the ticker, switch to the next layout, recall preset N,
+// pause or resume the timer. A press is sent
 // to the server, which acts on the studio as the dock would. Bindings are kept in plugin.json.
 class StudioHotkeys : public QObject {
 	Q_OBJECT

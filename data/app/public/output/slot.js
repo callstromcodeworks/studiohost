@@ -1,7 +1,7 @@
 // Single-guest output for an OBS Browser Source: /output/slot.html?slot=N
 // Options:
 //   audio=1         play this guest's audio here (off by default; the program source carries audio)
-//   names=1         show the guest's name tag
+//   names=1         show the guest's name tag (and headline)
 //   source=screen   show the guest's screen share instead of their camera
 //   fit=contain     letterbox instead of crop
 //   always=1        show the guest even while they are backstage
@@ -21,6 +21,8 @@ const video = /** @type {HTMLVideoElement} */ (document.getElementById('video'))
 const avatar = /** @type {HTMLElement} */ (document.getElementById('avatar'));
 const nameTag = /** @type {HTMLElement} */ (document.getElementById('name'));
 const ini = /** @type {HTMLElement} */ (document.getElementById('initials'));
+const nameText = /** @type {HTMLElement} */ (document.getElementById('name-text'));
+const headline = /** @type {HTMLElement} */ (document.getElementById('headline'));
 video.style.objectFit = param('fit') === 'contain' ? 'contain' : 'cover';
 video.muted = !withAudio;
 
@@ -47,7 +49,9 @@ function update() {
   ini.style.color = brand.textColor;
   ini.style.fontFamily = fontStack(brand.font);
   nameTag.style.display = withNames && source === 'camera' ? 'block' : 'none';
-  nameTag.textContent = p.name;
+  nameText.textContent = p.name;
+  headline.textContent = p.headline || '';
+  nameTag.classList.toggle('two', !!p.headline);
   nameTag.style.background = brand.color;
   nameTag.style.color = brand.textColor;
   nameTag.style.fontFamily = fontStack(brand.font);

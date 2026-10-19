@@ -39,6 +39,10 @@
         <div class="muted small" id="content-hint"></div>
       </div>
       <div class="layouts" id="layouts"></div>
+      <div class="presets card">
+        <div class="row"><h2 class="grow">Presets</h2><button class="btn small" id="preset-save" title="Save the layout, who is on stage, the content, banner and ticker as a preset">Save current stage</button></div>
+        <div class="row wrap" id="preset-list"></div>
+      </div>
 
       <div class="section">
         <div class="row"><h2 class="grow">On stage</h2><span class="muted small" id="stage-count"></span></div>
@@ -81,6 +85,34 @@
           <div class="row"><span class="muted small">Slow</span><input type="range" id="ticker-speed" class="grow" min="40" max="600" step="10"><span class="muted small">Fast</span></div>
         </label>
         <label class="check"><input type="checkbox" id="ticker-repeat"> Repeat ticker text (off: one copy on screen at a time)</label>
+
+        <h3 class="section-title">Timer</h3>
+        <div id="timer-now" class="timer-now hidden">
+          <div class="row"><strong class="timer-value grow" id="timer-value"></strong><span class="muted small" id="timer-state"></span></div>
+          <div class="row wrap">
+            <button class="btn small" id="timer-pause"></button>
+            <button class="btn small timer-down" id="timer-minus" title="Take a minute off">−1 min</button>
+            <button class="btn small timer-down" id="timer-plus" title="Add a minute">+1 min</button>
+            <span class="grow"></span>
+            <button class="btn small" id="timer-hide">Hide timer</button>
+          </div>
+        </div>
+        <form id="timer-form" class="stack">
+          <div class="row wrap">
+            <select id="timer-mode">
+              <option value="for">Count down for</option>
+              <option value="until">Count down to</option>
+              <option value="up">Count up</option>
+            </select>
+            <span class="row" id="timer-for"><input type="number" id="timer-min" min="0" max="1440" value="5" style="width:70px"> min <input type="number" id="timer-sec" min="0" max="59" value="0" style="width:60px"> s</span>
+            <input type="time" id="timer-until" class="hidden">
+          </div>
+          <input type="text" id="timer-label" maxlength="60" placeholder="Label (optional), e.g. Starting soon" autocomplete="off">
+          <div class="row"><span class="grow"></span><button class="btn primary small" id="timer-start">Show timer</button></div>
+        </form>
+        <label class="field">Timer position
+          <select id="timer-pos"><option value="top-left">Top left</option><option value="top-center">Top center</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-center">Bottom center</option><option value="bottom-right">Bottom right</option></select>
+        </label>
       </div>
 
       <div class="tab hidden" data-tab="brand">
