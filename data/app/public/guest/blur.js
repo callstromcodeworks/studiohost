@@ -25,6 +25,15 @@ const SEGMENT_HZ = 15;
 
 const generatorPath = () => 'MediaStreamTrackProcessor' in window && 'MediaStreamTrackGenerator' in window && 'VideoFrame' in window;
 
+const yieldChannel = typeof MessageChannel === 'function' ? new MessageChannel() : null;
+/** @type {(() => void)[]} */ const yielded = [];
+if (yieldChannel) yieldChannel.port1.onmessage = () => yielded.shift()?.();
+/** Waits for a turn of the page's event loop (unlike setTimeout, not slowed in a background tab). */
+function yieldToPage() {
+  if (!yieldChannel) return Promise.resolve();
+  return new Promise((resolve) => { yielded.push(() => resolve(undefined)); yieldChannel.port2.postMessage(0); });
+}
+
 /** Whether this browser can blur (it needs a secure page, WebAssembly and a way to make a video track). */
 export function blurSupported() {
   return !!globalThis.crypto?.subtle && typeof WebAssembly === 'object' && typeof OffscreenCanvas === 'function'
@@ -112,6 +121,9 @@ export class BackgroundBlur {
     const ctx = /** @type {OffscreenCanvasRenderingContext2D} */ (/** @type {OffscreenCanvas} */ (this.out).getContext('2d'));
     (async () => {
       while (!this.stopped) {
+        // Frames can be ready back to back, and awaiting them alone never lets the page's
+        // other work (its connection to the studio, WebRTC setup) run on a slow computer.
+        await yieldToPage();
         const { value: frame, done } = await reader.read().catch(() => ({ value: null, done: true }));
         if (done || !frame) break;
         try {
