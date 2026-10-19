@@ -15,9 +15,15 @@
 //   {type:'setup-done'}                       the wizard finished; close its window
 //   {type:'feed', on}                         start/stop sending the OBS output (only needed while guests are connected)
 //   {type:'widgets', items:[{id,name,url,visible}]}  web widgets to keep as Browser Sources in the Studio scene
+//   {type:'guests', items:[{id,name,volume,muted}]}  guests to show as strips in the OBS audio mixer
+//   binary packets between the lines, as on stdin:
+//     G: participant id (36 ASCII bytes), uint32le sample rate, int16le mono samples (that guest's
+//        audio, for their mixer strip's meter)
 // plugin -> server (stdin)
 //   {type:'obs-status', streaming, recording, virtualcam, studioMode, scene, builtin, sources}
 //   {type:'obs-result', id, ok, message?, error?}
+//   {type:'guest-mix', id, volume?, muted?}   a guest's mixer strip was changed in OBS
+//   {type:'hotkey', action, slot?}            a Studio Host hotkey was pressed (see Studio.hotkey)
 //   binary packets between the lines: 0x01, kind ('V' video, 'A' audio), uint32le length, payload
 //     V: uint16le width, uint16le height, I420 planes (the OBS program picture, scaled down)
 //     A: uint32le sample rate, interleaved float32 stereo (OBS audio minus Studio Host's guests)
@@ -33,6 +39,10 @@ export class PluginChannel {
     // stdout belongs to the protocol; route ordinary logging to stderr (the plugin copies it into the OBS log).
     console.log = (...args) => console.error(...args);
     console.info = (...args) => console.error(...args);
+    /** A guest's mixer strip was changed in OBS. @type {((msg: any) => void)|null} */
+    this.onGuestMix = null;
+    /** A Studio Host hotkey was pressed in OBS. @type {((msg: any) => void)|null} */
+    this.onHotkey = null;
     /** OBS output packets from the plugin. @type {((kind: string, payload: Buffer) => void)|null} */
     this.onFeed = null;
     /** @type {Buffer} */ let buf = Buffer.alloc(0);
@@ -81,6 +91,17 @@ export class PluginChannel {
   /** @param {object} msg */
   send(msg) { process.stdout.write(JSON.stringify(msg) + '\n'); }
 
+  /**
+   * Sends a binary packet to the plugin, dropped while the plugin is behind reading them.
+   * @param {string} kind one letter @param {Buffer} payload
+   */
+  sendPacket(kind, payload) {
+    if (process.stdout.writableLength > 2 * 1024 * 1024) return;
+    const header = Buffer.alloc(6);
+    header[0] = 0x01; header[1] = kind.charCodeAt(0); header.writeUInt32LE(payload.length, 2);
+    process.stdout.write(Buffer.concat([header, payload]));
+  }
+
   /** @param {string} line */
   receive(line) {
     let msg;
@@ -96,6 +117,10 @@ export class PluginChannel {
           : this.status.sources,
       };
       this.onStatus?.(this.status);
+    } else if (msg.type === 'hotkey') {
+      if (typeof msg.action === 'string') this.onHotkey?.(msg);
+    } else if (msg.type === 'guest-mix') {
+      if (typeof msg.id === 'string') this.onGuestMix?.(msg);
     } else if (msg.type === 'obs-result') {
       const p = this.pending.get(msg.id);
       if (!p) return;

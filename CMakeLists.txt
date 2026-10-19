@@ -50,12 +50,16 @@ target_sources(
     src/server-process.hpp
     src/obs-feed.cpp
     src/obs-feed.hpp
+    src/guest-mixer.cpp
+    src/guest-mixer.hpp
     src/studio-sources.cpp
     src/studio-sources.hpp
     src/studio-scenes.cpp
     src/studio-scenes.hpp
     src/studio-dock.cpp
     src/studio-dock.hpp
+    src/studio-hotkeys.cpp
+    src/studio-hotkeys.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

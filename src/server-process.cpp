@@ -207,13 +207,29 @@ bool ServerProcess::sendPacket(char kind, const QByteArray &payload, bool droppa
 void ServerProcess::onStdout()
 {
 	outBuffer += process->readAllStandardOutput();
-	qsizetype nl;
-	while ((nl = outBuffer.indexOf('\n')) >= 0) {
-		QByteArray line = outBuffer.left(nl).trimmed();
-		outBuffer.remove(0, nl + 1);
-		if (!line.isEmpty())
-			emit messageReceived(line);
+	qsizetype pos = 0;
+	while (pos < outBuffer.size()) {
+		if (outBuffer[pos] == 0x01) {
+			// Binary packet: 0x01, kind, payload length (uint32 little-endian), payload.
+			if (outBuffer.size() - pos < 6)
+				break;
+			auto *b = reinterpret_cast<const unsigned char *>(outBuffer.constData() + pos + 2);
+			qsizetype len = b[0] | (b[1] << 8) | (b[2] << 16) | (static_cast<quint32>(b[3]) << 24);
+			if (outBuffer.size() - pos < 6 + len)
+				break;
+			emit packetReceived(outBuffer[pos + 1], outBuffer.mid(pos + 6, len));
+			pos += 6 + len;
+		} else {
+			qsizetype nl = outBuffer.indexOf('\n', pos);
+			if (nl < 0)
+				break;
+			QByteArray line = outBuffer.mid(pos, nl - pos).trimmed();
+			pos = nl + 1;
+			if (!line.isEmpty())
+				emit messageReceived(line);
+		}
 	}
+	outBuffer.remove(0, pos);
 }
 
 void ServerProcess::onStderr()

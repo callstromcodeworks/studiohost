@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 // @ts-check
 // Studio Host server. Normally started by the Studio Host OBS plugin (with --managed),
-// which talks to it over stdin/stdout. It can also run on its own (`npm start`),
-// in which case OBS integration falls back to obs-websocket.
+// which talks to it over stdin/stdout. It can also run on its own (`npm start`) for
+// development and tests, without the OBS features.
 import http from 'node:http';
 import { CONFIG_PATH, DATA_DIR, MANAGED, loadConfig, saveConfigPatch } from './config.js';
 import { createHandler, createUpgradeHandler } from './http.js';
-import { setupObs } from './obs.js';
 import { PluginChannel } from './ipc.js';
 import { Studio } from './studio.js';
+import { Invite, INVITE_EXPIRY_CHOICES } from './invite.js';
 import { NetworkManager, defaultNetworkSettings, validateSettings } from './network.js';
 
 const channel = MANAGED ? new PluginChannel() : null;
 const config = loadConfig();
 const studio = new Studio(config);
+const invite = new Invite(config, saveConfigPatch);
+// Producer pages show the invite link and when it changes next.
+invite.on('changed', () => studio.broadcast({ type: 'invite' }, (c) => c.role === 'host'));
 
 studio.obs = { managed: MANAGED, ...(channel?.status || {}) };
 if (channel) {
@@ -22,6 +25,10 @@ if (channel) {
   studio.onContent = (c) => channel.send({ type: 'content', ...c });
   studio.onFeedWanted = (on) => channel.send({ type: 'feed', on });
   studio.onWidgets = (items) => channel.send({ type: 'widgets', items });
+  studio.onGuests = (items) => channel.send({ type: 'guests', items });
+  studio.onGuestAudio = (data) => { if (data[0] === 0x47 && data.length > 41) channel.sendPacket('G', data.subarray(1)); };
+  channel.onGuestMix = (m) => studio.setMix(m.id, m);
+  channel.onHotkey = (m) => { const err = studio.hotkey(m.action, Number(m.slot) || 0); if (err) console.error(`[hotkey] ${m.action}: ${err}`); };
   channel.onFeed = (kind, payload) => studio.forwardFeed(kind, payload);
 }
 
@@ -66,7 +73,9 @@ function links() {
   const local = `http://127.0.0.1:${config.localPort}`;
   const pub = network.publicUrl;
   return {
-    invite: pub ? `${pub}/guest/?k=${config.guestKey}` : '',
+    invite: pub ? `${pub}/guest/?k=${invite.key}` : '',
+    inviteExpiresAt: invite.expiresAt,
+    inviteExpiryHours: invite.hours,
     hostJoin: pub ? `${pub}/guest/?k=${config.hostKey}&host=1` : '',
     hostRemote: pub ? `${pub}/host/?key=${config.hostKey}` : '',
     dock: `${local}/host/`,
@@ -83,7 +92,7 @@ function links() {
 
 /** Studio settings that apply to both setup modes (no restart needed). */
 function configView() {
-  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort, guestFeed: config.guestFeed };
+  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort, guestFeed: config.guestFeed, inviteExpiryHours: invite.hours };
 }
 
 /** @param {any} body @returns {string} */
@@ -109,6 +118,8 @@ function configSave(body) {
     if (codec !== 'auto' && codec !== 'h264') throw new Error('Program video codec must be "auto" or "h264".');
     patch.guestFeed = { ...config.guestFeed, maxKbps, totalKbps, codec };
   }
+  const expiry = 'inviteExpiryHours' in body ? Number(body.inviteExpiryHours) : invite.hours;
+  if (!INVITE_EXPIRY_CHOICES.includes(expiry)) throw new Error('Invite links can expire after 1, 2, 6, 12 or 24 hours, or never.');
   let restart = false;
   if ('localPort' in body) {
     const n = Number(body.localPort);
@@ -116,6 +127,7 @@ function configSave(body) {
     if (n !== config.localPort) { patch.localPort = n; restart = true; }
   }
   saveConfigPatch(patch);
+  if (expiry !== invite.hours) invite.setExpiry(expiry);
   Object.assign(config, restart ? { ...patch, localPort: config.localPort } : patch);
   if (patch.guestFeed) studio.broadcast({ type: 'guest-feed', guestFeed: patch.guestFeed }, (c) => c.role === 'program');
   if (restart && channel) {
@@ -126,9 +138,9 @@ function configSave(body) {
 }
 
 const ctx = {
-  studio, config, links, configView, configSave,
+  studio, config, invite, links, configView, configSave,
   managed: MANAGED,
-  obsSetup: () => (channel ? channel.request('setupScenes') : setupObs(config, studio.studio.slots)),
+  obsSetup: () => (channel ? channel.request('setupScenes') : Promise.reject(new Error('Creating scenes needs the Studio Host OBS plugin.'))),
   /** @param {string} scene @param {number} [slot] */
   obsScene: (scene, slot) => {
     if (!channel) return Promise.reject(new Error('Scene switching needs the Studio Host OBS plugin.'));
@@ -151,13 +163,7 @@ const ctx = {
 };
 guestHandler = createHandler(ctx, false);
 
-if (process.argv.includes('--setup-obs')) {
-  setupObs(config, studio.studio.slots)
-    .then((msg) => { console.log(msg); process.exit(0); })
-    .catch((err) => { console.error(err.message); process.exit(1); });
-} else {
-  start();
-}
+start();
 
 async function start() {
   // Local listener: OBS sources, the dock and the setup wizard load from here (no TLS on localhost).
@@ -177,6 +183,7 @@ async function start() {
       configured: network.configured, publicUrl: network.publicUrl,
     });
     studio.notifyWidgets(true);
+    studio.notifyGuests(true);
   } else {
     console.log(`
   Studio Host is running
@@ -189,7 +196,7 @@ async function start() {
   Config file:                              ${CONFIG_PATH}
 `);
     if (!network.configured) console.log('  Guests can’t join yet: open the setup wizard to choose how they reach you.\n');
-    network.once('status', () => { if (network.publicUrl) console.log(`  Guest invite link: ${network.publicUrl}/guest/?k=${config.guestKey}\n`); });
+    network.once('status', () => { if (network.publicUrl) console.log(`  Guest invite link: ${network.publicUrl}/guest/?k=${invite.key}\n`); });
   }
 
   const shutdown = async () => { await network.stop(); local.close(); process.exit(0); };

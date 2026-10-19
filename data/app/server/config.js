@@ -21,13 +21,15 @@ export const CONFIG_PATH = join(DATA_DIR, 'config.json');
  * @property {{cert: string, key: string, selfSigned?: boolean}} [tls]
  * @property {RTCIceServerLike[]} iceServers  STUN/TURN servers handed to every browser.
  * @property {string} hostKey            Secret that unlocks host controls when not on localhost.
- * @property {string} guestKey           Invite token included in the guest link.
+ * @property {string} guestKey           Invite token included in the guest link (replaced when it expires, see invite.js).
+ * @property {number} [guestKeyIssuedAt] When guestKey was made (ms); set by invite.js.
+ * @property {number} inviteExpiryHours  How long an invite link works: 1, 2, 6, 12 or 24 hours, or 0 for never.
+ * @property {string} [rejoinSecret]    Signs the tickets that let guests rejoin after the link has changed.
  * @property {number} maxGuests
  * @property {{width: number, height: number, fps: number}} output
  * @property {{maxKbps: number, totalKbps: number, codec?: 'auto' | 'h264'}} guestFeed  Caps on the program
  *   video sent back to guests: per guest, and shared by all guests (this machine's upload also carries
  *   the live stream). codec "h264" prefers H.264 even when the browser reports no hardware encoder.
- * @property {{url: string, password: string, sceneName: string, slots: number}} obs
  */
 
 /** @typedef {{urls: string | string[], username?: string, credential?: string}} RTCIceServerLike */
@@ -41,10 +43,10 @@ function defaults() {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     hostKey: token(),
     guestKey: token(),
+    inviteExpiryHours: 1,
     maxGuests: 10,
     output: { width: 1920, height: 1080, fps: 30 },
     guestFeed: { maxKbps: 3000, totalKbps: 12000, codec: 'auto' },
-    obs: { url: 'ws://127.0.0.1:4455', password: '', sceneName: 'Studio Host', slots: 4 },
   };
 }
 
@@ -65,7 +67,6 @@ export function loadConfig() {
     ...fromDisk,
     output: { ...base.output, ...(fromDisk.output || {}) },
     guestFeed: { ...base.guestFeed, ...(fromDisk.guestFeed || {}) },
-    obs: { ...base.obs, ...(fromDisk.obs || {}) },
   };
   if (!existsSync(CONFIG_PATH)) {
     writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2) + '\n');

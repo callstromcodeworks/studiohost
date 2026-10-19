@@ -17,9 +17,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "studio-controller.hpp"
+#include "guest-mixer.hpp"
 #include "obs-feed.hpp"
 #include "server-process.hpp"
 #include "studio-dock.hpp"
+#include "studio-hotkeys.hpp"
 #include "studio-scenes.hpp"
 #include "studio-sources.hpp"
 
@@ -74,10 +76,7 @@ StudioController::StudioController()
 	dock = new StudioDock();
 	if (!obs_frontend_add_dock_by_id(DOCK_ID, obs_module_text("Dock.Title"), dock))
 		obs_log(LOG_WARNING, "could not add the Studio Host dock");
-	connect(dock, &StudioDock::restartRequested, this, [this]() {
-		dock->showStatus(text("Dock.Starting"));
-		server->restart();
-	});
+	connect(dock, &StudioDock::restartRequested, this, &StudioController::restartServer);
 	connect(dock, &StudioDock::openDataFolderRequested, this,
 		[]() { QDesktopServices::openUrl(QUrl::fromLocalFile(ServerProcess::dataDirectory())); });
 
@@ -85,8 +84,18 @@ StudioController::StudioController()
 	connect(server, &ServerProcess::messageReceived, this, &StudioController::onServerMessage);
 	connect(server, &ServerProcess::failed, this, &StudioController::onServerFailed);
 	feed = new ObsFeed(server, this);
+	guestMixer = new GuestMixer(server, this);
+	connect(server, &ServerProcess::packetReceived, this, [this](char kind, const QByteArray &payload) {
+		if (kind == 'G')
+			guestMixer->pushAudio(payload);
+	});
+
+	hotkeys = new StudioHotkeys(server, pluginConfig, this);
+	hotkeys->ensureSlots(slotCount);
 
 	obs_frontend_add_event_callback(handleFrontendEvent, this);
+	// OBS saves when hotkeys are changed in its settings (among other times): keep them then.
+	obs_frontend_add_save_callback(handleFrontendSave, this);
 
 	// Keep the dock's list of OBS sources (for content) current. Sources are created and
 	// removed on any thread, often in bursts, so coalesce into one status update.
@@ -107,12 +116,7 @@ StudioController::StudioController()
 		[](void *data) { static_cast<StudioController *>(data)->createScenesNow(); }, this);
 	obs_frontend_add_tools_menu_item(
 		obs_module_text("Menu.Restart"),
-		[](void *data) {
-			auto *self = static_cast<StudioController *>(data);
-			self->dock->showStatus(text("Dock.Starting"));
-			self->server->restart();
-		},
-		this);
+		[](void *data) { static_cast<StudioController *>(data)->restartServer(); }, this);
 	obs_frontend_add_tools_menu_item(
 		obs_module_text("Menu.OpenFolder"),
 		[](void *) { QDesktopServices::openUrl(QUrl::fromLocalFile(ServerProcess::dataDirectory())); }, this);
@@ -133,6 +137,7 @@ StudioController::~StudioController()
 {
 	shutdown();
 	obs_frontend_remove_event_callback(handleFrontendEvent, this);
+	obs_frontend_remove_save_callback(handleFrontendSave, this);
 	obs_data_release(pluginConfig);
 	obs_data_array_release(widgets);
 }
@@ -150,6 +155,10 @@ void StudioController::shutdown()
 	if (shuttingDown)
 		return;
 	shuttingDown = true;
+	if (hotkeys) {
+		hotkeys->save();
+		savePluginConfig();
+	}
 	signal_handler_t *sh = obs_get_signal_handler();
 	signal_handler_disconnect(sh, "source_create", handleSourceListSignal, this);
 	signal_handler_disconnect(sh, "source_destroy", handleSourceListSignal, this);
@@ -163,8 +172,16 @@ void StudioController::shutdown()
 		dock->shutdown();
 	stop_program_browser();
 	detach_global_audio();
+	if (guestMixer)
+		guestMixer->detach();
 	if (server)
 		server->stop();
+}
+
+void StudioController::restartServer()
+{
+	dock->showStatus(text("Dock.Starting"));
+	server->restart();
 }
 
 // ---- settings -------------------------------------------------------------------
@@ -209,12 +226,22 @@ void StudioController::handleFrontendEvent(enum obs_frontend_event event, void *
 	static_cast<StudioController *>(data)->onFrontendEvent(event);
 }
 
+void StudioController::handleFrontendSave(obs_data_t *, bool saving, void *param)
+{
+	auto *self = static_cast<StudioController *>(param);
+	if (!saving || !self->hotkeys)
+		return;
+	self->hotkeys->save();
+	self->savePluginConfig();
+}
+
 void StudioController::onFrontendEvent(enum obs_frontend_event event)
 {
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		obsLoaded = true;
 		attach_global_audio();
+		guestMixer->attach();
 		if (serverReady)
 			start_program_browser();
 		rename_legacy_builtins();
@@ -226,11 +253,13 @@ void StudioController::onFrontendEvent(enum obs_frontend_event event)
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
 		detach_global_audio();
+		guestMixer->detach();
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 		if (!obsLoaded)
 			break;
 		attach_global_audio();
+		guestMixer->attach();
 		rename_legacy_builtins();
 		setupScenesForCollectionOnce();
 		syncWidgets();
@@ -276,8 +305,10 @@ void StudioController::onServerMessage(const QByteArray &json)
 		if (port > 0 && port < 65536)
 			localPort = static_cast<int>(port);
 		long long n = obs_data_get_int(msg, "slots");
-		if (n >= 1 && n <= 16)
+		if (n >= 1 && n <= 16) {
 			slotCount = static_cast<int>(n);
+			hotkeys->ensureSlots(slotCount);
+		}
 		std::string base = "http://127.0.0.1:" + std::to_string(localPort);
 		set_base_url(base); // points every page at the server (no-op if unchanged)
 		if (obsLoaded)
@@ -313,15 +344,19 @@ void StudioController::onServerMessage(const QByteArray &json)
 		obs_data_array_release(widgets);
 		widgets = obs_data_get_array(msg, "items");
 		syncWidgets();
+	} else if (strcmp(type, "guests") == 0) {
+		obs_data_array_t *items = obs_data_get_array(msg, "items");
+		if (items)
+			guestMixer->setGuests(items);
+		obs_data_array_release(items);
 	} else if (strcmp(type, "slots") == 0) {
 		long long n = obs_data_get_int(msg, "count");
 		if (n >= 1 && n <= 16) {
 			slotCount = static_cast<int>(n);
+			hotkeys->ensureSlots(slotCount);
 			// Collections that use the built-in scenes get scenes for the new slots too.
-			obs_data_t *done = obs_data_get_obj(pluginConfig, "scenesCreated");
-			if (obsLoaded && done && obs_data_has_user_value(done, currentCollection().c_str()))
+			if (obsLoaded && scenesCreated(currentCollection()))
 				ensure_builtin_scenes(slotCount);
-			obs_data_release(done);
 		}
 	} else if (strcmp(type, "restart") == 0) {
 		serverReady = false;
@@ -356,14 +391,7 @@ void StudioController::handleObsRequest(obs_data_t *msg)
 		reply(id, ok, ok ? "Switched scene." : error);
 	} else if (strcmp(action, "setupScenes") == 0) {
 		std::string summary = ensure_builtin_scenes(slotCount);
-		obs_data_t *done = obs_data_get_obj(pluginConfig, "scenesCreated");
-		if (!done) {
-			done = obs_data_create();
-			obs_data_set_obj(pluginConfig, "scenesCreated", done);
-		}
-		obs_data_set_bool(done, currentCollection().c_str(), true);
-		obs_data_release(done);
-		savePluginConfig();
+		markScenesCreated(currentCollection());
 		syncWidgets();
 		reply(id, true, summary);
 	} else {
@@ -456,7 +484,7 @@ void StudioController::maybeAutoOpenWizard()
 		return;
 	obs_data_set_bool(pluginConfig, "wizardShown", true);
 	savePluginConfig();
-	blog(LOG_INFO, "[studiohost] opening the setup wizard (first run)");
+	obs_log(LOG_INFO, "opening the setup wizard (first run)");
 	openWizard();
 }
 
@@ -480,7 +508,7 @@ void StudioController::openWizard()
 	wizard->show();
 	wizard->raise();
 	wizard->activateWindow();
-	blog(LOG_INFO, "[studiohost] setup wizard shown (visible: %s)", wizard->isVisible() ? "yes" : "no");
+	obs_log(LOG_INFO, "setup wizard shown (visible: %s)", wizard->isVisible() ? "yes" : "no");
 }
 
 // ---- scenes and dock --------------------------------------------------------------
@@ -490,31 +518,39 @@ void StudioController::setupScenesForCollectionOnce()
 	std::string collection = currentCollection();
 	if (collection.empty())
 		return;
+	if (scenesCreated(collection))
+		return;
+	std::string summary = ensure_builtin_scenes(slotCount);
+	obs_log(LOG_INFO, "scene collection '%s': %s", collection.c_str(), summary.c_str());
+	markScenesCreated(collection);
+}
+
+// Whether the built-in scenes were created for `collection` (they are only created once, so
+// scenes the producer deletes stay deleted).
+bool StudioController::scenesCreated(const std::string &collection)
+{
+	obs_data_t *done = obs_data_get_obj(pluginConfig, "scenesCreated");
+	bool created = done && obs_data_has_user_value(done, collection.c_str());
+	obs_data_release(done);
+	return created;
+}
+
+void StudioController::markScenesCreated(const std::string &collection)
+{
 	obs_data_t *done = obs_data_get_obj(pluginConfig, "scenesCreated");
 	if (!done) {
 		done = obs_data_create();
 		obs_data_set_obj(pluginConfig, "scenesCreated", done);
 	}
-	if (!obs_data_has_user_value(done, collection.c_str())) {
-		std::string summary = ensure_builtin_scenes(slotCount);
-		obs_log(LOG_INFO, "scene collection '%s': %s", collection.c_str(), summary.c_str());
-		obs_data_set_bool(done, collection.c_str(), true);
-		savePluginConfig();
-	}
+	obs_data_set_bool(done, collection.c_str(), true);
 	obs_data_release(done);
+	savePluginConfig();
 }
 
 void StudioController::createScenesNow()
 {
 	std::string summary = ensure_builtin_scenes(slotCount);
-	obs_data_t *done = obs_data_get_obj(pluginConfig, "scenesCreated");
-	if (!done) {
-		done = obs_data_create();
-		obs_data_set_obj(pluginConfig, "scenesCreated", done);
-	}
-	obs_data_set_bool(done, currentCollection().c_str(), true);
-	obs_data_release(done);
-	savePluginConfig();
+	markScenesCreated(currentCollection());
 	syncWidgets();
 	QMessageBox::information(static_cast<QWidget *>(obs_frontend_get_main_window()), text("Dock.Title"),
 				 QString::fromStdString(summary));

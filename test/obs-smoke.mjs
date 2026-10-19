@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { ObsClient } from '../data/app/server/obs.js';
+import { ObsClient } from './obs-client.mjs';
 import { computeLayout, REF_W, REF_H } from '../data/app/public/common/render.js';
 
 const require = createRequire(import.meta.url);
@@ -173,6 +173,31 @@ async function guestScenarios(obs, host, invite, pw) {
   const peak = await programAudioPeak();
   check(peak > 0.001, `program audio reaches the OBS mixer via Studio Host Audio (peak ${peak.toFixed(3)})`);
 
+  // Each guest has a strip in the OBS mixer: on no track, metering their audio, and its fader
+  // and mute are the guest's volume and mute in the studio.
+  const strips = (await obs.call('GetInputList', { inputKind: 'studiohost_guest_strip' })).inputs.map((i) => i.inputName);
+  for (const g of GUESTS) check(strips.includes(`Studio Host: ${g.name}`), `${g.name} has a strip in the OBS mixer`);
+  const strip = 'Studio Host: HD Guest';
+  const stripPeak = await programAudioPeak(strip);
+  check(stripPeak > 0.001, `the mixer strip meters the guest's audio (peak ${stripPeak.toFixed(3)})`);
+  const tracks = (await obs.call('GetInputAudioTracks', { inputName: strip }).catch(() => null))?.inputAudioTracks;
+  check(!!tracks && Object.values(tracks).every((on) => !on), 'the strip is on no mixer track (no doubled audio)');
+  const hdId = await idOf('HD Guest');
+  const hd0 = (await snapshot()).participants.find((p) => p.id === hdId);
+  await obs.call('SetInputVolume', { inputName: strip, inputVolumeMul: 0.5 });
+  check(!!(await waitFor(async () => Math.abs(((await snapshot()).participants.find((p) => p.id === hdId)?.volume ?? 0) - 0.5) < 0.01 || null, 5000)), 'moving the strip fader sets the guest volume');
+  await obs.call('SetInputMute', { inputName: strip, inputMuted: true });
+  check(!!(await waitFor(async () => (await snapshot()).participants.find((p) => p.id === hdId)?.hostMuted === true || null, 5000)), 'muting the strip mutes the guest');
+  await act('hostMute', { participant: hdId, on: false });
+  await act('volume', { participant: hdId, volume: 1 });
+  check(!!(await waitFor(async () => (await obs.call('GetInputMute', { inputName: strip })).inputMuted === false || null, 5000)), 'unmuting in the dock unmutes the strip');
+
+  // Studio Host hotkeys (triggered here through obs-websocket) act on the studio.
+  await obs.call('TriggerHotkeyByName', { hotkeyName: `studiohost.mute_${hd0.slot}` });
+  check(!!(await waitFor(async () => (await snapshot()).participants.find((p) => p.id === hdId)?.hostMuted === true || null, 5000)), `the "mute guest ${hd0.slot}" hotkey mutes the guest`);
+  await obs.call('TriggerHotkeyByName', { hotkeyName: `studiohost.mute_${hd0.slot}` });
+  check(!!(await waitFor(async () => (await snapshot()).participants.find((p) => p.id === hdId)?.hostMuted === false || null, 5000)), 'pressing it again unmutes them');
+
   // OBS's own audio reaches guests: a looping tone in the live scene, heard on a guest's
   // program feed (compared with the tone muted, since guests also hear each other).
   const tone = join(tmpdir(), 'studiohost-smoke-tone.wav');
@@ -294,14 +319,14 @@ function toneLevel(page) {
   }, TONE_HZ);
 }
 
-/** Peak level of the Studio Host Audio source over a few seconds, from OBS's own meters. */
-async function programAudioPeak() {
+/** Peak level of an audio source (Studio Host Audio by default) over a few seconds, from OBS's own meters. */
+async function programAudioPeak(inputName = 'Studio Host Audio') {
   const meter = new ObsClient('ws://127.0.0.1:4455', '', 1 << 16); // InputVolumeMeters (high-volume)
   await meter.connect(5000);
   let peak = 0;
   meter.onEvent = (type, data) => {
     if (type !== 'InputVolumeMeters') return;
-    const input = data.inputs.find((i) => i.inputName === 'Studio Host Audio');
+    const input = data.inputs.find((i) => i.inputName === inputName);
     for (const ch of input?.inputLevelsMul || []) peak = Math.max(peak, ch[1] || 0);
   };
   await sleep(5000);

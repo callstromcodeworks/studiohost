@@ -4,7 +4,7 @@ import { StudioClient, param } from '../common/client.js';
 import { manageLinks } from '../common/peer.js';
 import { MediaBank } from '../common/media.js';
 import { StageRenderer, initials } from '../common/render.js';
-import { $, h, icon, toast, copy, timeOf } from '../common/ui.js';
+import { $, h, icon, toast, copy, appendChat } from '../common/ui.js';
 
 const client = new StudioClient('host');
 const bank = new MediaBank();
@@ -197,6 +197,20 @@ async function updateInvite() {
   b.title = ready ? 'Copy the guest invite link' : 'Guests can’t join until setup is done';
 }
 
+/** When the invite link changes next, for the Setup tab. */
+function inviteHint() {
+  const at = info?.inviteExpiresAt;
+  if (!at) return 'Anyone with this link can join backstage. It doesn’t expire (change that under Connection extras).';
+  const when = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const hours = info.inviteExpiryHours;
+  return `Anyone with this link can join backstage until ${when}. A new link replaces it every ${hours === 1 ? 'hour' : `${hours} hours`}; copy it again before inviting more guests.`;
+}
+
+async function newInvite() {
+  try { await client.post('invite-new'); toast('New invite link made. The old one no longer works.'); }
+  catch (e) { toast(e.message, { error: true }); }
+}
+
 /** @param {number} v */
 function kbps(v) { return v >= 1000 ? `${(v / 1000).toFixed(1)} Mbps` : `${v} kbps`; }
 
@@ -361,11 +375,8 @@ function renderChatTargets() {
 }
 /** @param {any} m */
 function addChat(m) {
-  const log = $('#chat-log');
   const to = m.to === null ? '' : m.to === 'host' ? ' → producers' : ` → ${state?.participants.find((p) => p.id === m.to)?.name || 'guest'}`;
-  log.append(h(`div.chat-msg${m.to !== null ? '.private' : ''}${m.fromId === client.id ? '.mine' : ''}`, null,
-    h('div.who', null, `${m.from}${to} · ${timeOf(m.ts)}`), h('div', null, m.text)));
-  log.scrollTop = log.scrollHeight;
+  appendChat(m, m.fromId === client.id, to);
   if (currentTab !== 'chat' && m.fromId !== client.id) { unread++; $('#chat-badge').textContent = String(unread); $('#chat-badge').classList.remove('hidden'); }
 }
 
@@ -390,9 +401,8 @@ function renderSetup() {
         obsBtn,
       ]
     : [
-        h('div.row', null, h('span.grow', null, 'Per-guest slot sources'), slotCount),
-        h('div.muted.small', null, 'Running without the OBS plugin. This uses OBS → Tools → WebSocket Server Settings; set obs.password in the config file if authentication is enabled.'),
-        obsBtn,
+        h('div.row', null, h('span.grow', null, 'Guest slots'), slotCount),
+        h('div.muted.small', null, 'Running without the OBS plugin. Add these pages to OBS yourself:'),
         linkBox('Program (Browser Source)', info.program, `Size ${info.output.width}×${info.output.height}, enable "Control audio via OBS".`),
         linkBox('Guest slot N (Browser Source)', info.slot + '1', 'Replace the number for other slots. Options: &audio=1, &names=1, &source=screen, &fit=contain, &always=1.'),
         linkBox('Guest screen share (Browser Source)', info.feature, ''),
@@ -404,7 +414,9 @@ function renderSetup() {
     networkSummary(),
     ...(info.invite ? [
       h('h2', null, 'Invite'),
-      linkBox('Guest invite link', info.invite, 'Anyone with this link can join backstage.'),
+      linkBox('Guest invite link', info.invite, inviteHint()),
+      h('div.row', null, h('button.btn.small', { onclick: newInvite }, 'New link now'),
+        h('span.muted.small', null, 'The old link stops working; guests already in the studio stay.')),
       linkBox('Join on camera yourself', info.hostJoin, 'Open in a browser with your camera. Keep this private: it carries your host key.'),
       linkBox('Producer controls from another device', info.hostRemote, 'Keep this private: it carries your host key.'),
     ] : []),
@@ -454,6 +466,8 @@ function settingsForm() {
     const feedTotal = h('input', { type: 'number', min: '300', max: '200000', step: '100', value: String(cfg.guestFeed.totalKbps) });
     const feedCodec = h('select', null, h('option', { value: 'auto' }, 'Automatic'), h('option', { value: 'h264' }, 'H.264 (GPU encoder)'));
     /** @type {HTMLSelectElement} */ (feedCodec).value = cfg.guestFeed.codec === 'h264' ? 'h264' : 'auto';
+    const expiry = h('select', null, ...[1, 2, 6, 12, 24].map((n) => h('option', { value: String(n) }, n === 1 ? '1 hour' : `${n} hours`)), h('option', { value: '0' }, 'Never'));
+    /** @type {HTMLSelectElement} */ (expiry).value = String(cfg.inviteExpiryHours ?? 1);
     const ice = h('textarea', { rows: 5, spellcheck: false }, JSON.stringify(cfg.iceServers, null, 2));
     const save = h('button.btn.primary', { type: 'button' }, 'Save');
     save.addEventListener('click', async () => {
@@ -461,7 +475,7 @@ function settingsForm() {
       try { iceServers = JSON.parse(ice.value); } catch { toast('STUN/TURN servers must be valid JSON.', { error: true }); return; }
       save.disabled = true;
       try { toast((await client.post('config-save', {
-        maxGuests: Number(maxGuests.value), iceServers,
+        maxGuests: Number(maxGuests.value), iceServers, inviteExpiryHours: Number(/** @type {HTMLSelectElement} */ (expiry).value),
         guestFeed: { maxKbps: Number(feedEach.value), totalKbps: Number(feedTotal.value), codec: /** @type {HTMLSelectElement} */ (feedCodec).value },
       })).message); }
       catch (e) { toast(e.message, { error: true, ms: 8000 }); }
@@ -470,6 +484,7 @@ function settingsForm() {
     box.replaceChildren(
       f('STUN/TURN servers (JSON)', ice, 'Add a TURN server if guests on strict networks get stuck connecting.'),
       f('Max guests', maxGuests),
+      f('Invite link expires after', expiry, 'A new invite link replaces the old one this often. Guests already in the studio stay connected.'),
       f('Program video per guest (kbps)', feedEach, 'The most any one guest receives. Guests on slower connections get less automatically.'),
       f('Program video for all guests (kbps)', feedTotal, 'Shared by everyone connected. Keep it well under your upload speed minus your stream bitrate.'),
       f('Program video codec', feedCodec, 'Choose H.264 if this computer has a GPU video encoder (most NVIDIA, AMD and Intel GPUs do) to take encoding off the CPU. Applies to guests who connect after saving.'),
@@ -608,6 +623,7 @@ async function main() {
     if (network && !network.remoteOnly && (m.status.seq ?? 0) < (network.seq ?? 0)) return; // older than what we have
     network = m.status; if (currentTab === 'setup') renderSetup(); updateInvite();
   });
+  client.on('invite', async () => { await updateInvite(); if (currentTab === 'setup') renderSetup(); });
   client.on('lost', () => { $('#fatal').textContent = 'Reconnecting to Studio Host…'; $('#fatal').classList.remove('hidden'); setTimeout(() => location.reload(), 3000); });
   renderer.start(15);
   info = await client.post('info').catch(() => null);

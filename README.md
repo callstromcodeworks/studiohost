@@ -4,7 +4,7 @@ A remote guest studio built into OBS. Guests join from a browser link with no in
 
 By Callstrom Code Works.
 
-> **Status: v0.2, early.** CI builds the plugin for Windows, macOS and Linux. On Linux, CI also installs it into a real OBS (under a virtual display, with browser hardware acceleration off) and checks the whole path: the plugin starts the server and creates the scenes and sources; four guests join on simulated uplinks from 100 kbps to uncapped; their video and audio reach the studio within each cap; program audio reaches the OBS mixer; and every layout — with guests hidden, with an OBS source as content, and with a guest's screen share as content — is checked pixel by pixel in OBS's own rendered frame. It has not yet been tried by hand on Windows or macOS, or with browser hardware acceleration on — please report what you find.
+> **Status: v0.5, early.** CI builds the plugin for Windows, macOS and Linux. On Linux, CI also installs it into a real OBS (under a virtual display, with browser hardware acceleration off) and checks the whole path: the plugin starts the server and creates the scenes and sources; four guests join on simulated uplinks from 100 kbps to uncapped; their video and audio reach the studio within each cap; program audio reaches the OBS mixer; and every layout — with guests hidden, with an OBS source as content, and with a guest's screen share as content — is checked pixel by pixel in OBS's own rendered frame. It has not yet been tried by hand on Windows or macOS, or with browser hardware acceleration on — please report what you find.
 
 ## What you get in OBS
 
@@ -16,6 +16,8 @@ By Callstrom Code Works.
 - **Built-in scenes**, created once per scene collection (missing ones can be recreated from the dock or Tools menu; existing ones are never changed):
   - *Studio Host: Studio*, *Studio Host: Guest Screen Share*, *Studio Host: Guest 1…N*
 - **Studio Host Audio** in the mixer: the program audio (everyone on stage, plus clips) stays live whichever scene is showing.
+- **A mixer strip per guest** (*Studio Host: <name>*): its meter shows that guest's microphone, backstage or on stage, and its fader and mute button are the guest's volume and mute in the program, kept in step with the dock. The strips are on no mixer track, because the guests are already in Studio Host Audio; Studio Host keeps them that way so nobody is heard twice.
+- **Hotkeys** (Settings → Hotkeys, under *Studio Host*): bring guest N on or off stage, mute or unmute guest N, show the next banner, hide the banner, show or hide the ticker, and switch to the next layout. A Stream Deck can press them with its Hotkey action.
 - **Tools menu**: Create Built-in Scenes, Restart Server, Open Data Folder.
 
 Features of the studio itself: guest green room (device check, level meter), backstage/on-stage, hiding guests from the picture, layouts with and without content (below), guest screen sharing, branding, banners and tickers, video clips, per-guest volume/mute/talkback, a mix-minus return feed so every guest sees and hears the show, and private producer–guest chat. Not included on purpose: multistreaming, recording, audience comments, webinars and video repurposing — OBS or other tools handle those.
@@ -147,7 +149,7 @@ For when you manage the network yourself:
 
 ### Inviting guests
 
-Copy the **Invite link** from the dock's top bar or Setup tab and send it however you like. One link works for every guest; each types their name in the green room. To appear on camera yourself, open **Join on camera yourself** (Setup tab) in a normal browser. If your own mic is already an OBS input, mark yourself **Talkback only** so your voice isn't doubled in the program.
+Copy the **Invite link** from the dock's top bar or Setup tab and send it however you like. One link works for every guest; each types their name in the green room. The link changes by itself after an hour, so a link that gets passed around stops working; copy it again before inviting more guests. **Invite link expires after** (Setup tab → Connection extras) sets this to 1, 2, 6, 12 or 24 hours, or Never, and **New link now** replaces it on the spot. Guests already in the studio aren't affected, and a guest whose connection drops can rejoin from the same browser tab after the link has changed (for up to 12 hours), unless you removed them. To appear on camera yourself, open **Join on camera yourself** (Setup tab) in a normal browser. If your own mic is already an OBS input, mark yourself **Talkback only** so your voice isn't doubled in the program.
 
 Media (audio and video) still travels peer-to-peer between each guest's browser and this computer over WebRTC, separately from the guest port. That works on most home networks; a TURN server covers the rest.
 

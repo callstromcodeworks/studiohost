@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include "guest-mixer.hpp"
 #include "obs-feed.hpp"
 #include "studio-controller.hpp"
 #include "studio-sources.hpp"
@@ -37,6 +38,7 @@ bool obs_module_load(void)
 {
 	studiohost::register_sources();
 	studiohost::register_feed_output();
+	studiohost::register_guest_strip_source();
 	controller = new studiohost::StudioController();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 	return true;
