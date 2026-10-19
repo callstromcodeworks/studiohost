@@ -219,6 +219,11 @@ try {
   await host.click('#timer-pause');
   await host.click('#timer-plus');
   check(await waitFor(() => host.evaluate(() => /^(3:00|2:5\d)$/.test(document.querySelector('#timer-value').textContent) && document.querySelector('#timer-pause').textContent === 'Resume')), 'timer pauses and takes an extra minute');
+  // The program may get the pause and the extra minute a moment after the dock does.
+  check(await waitFor(() => program.evaluate(() => {
+    const t = window.studioHost.client.state.studio.timer;
+    return !!t?.pausedAt && t.endsAt - t.pausedAt > 120_000;
+  })), 'the program has the paused timer');
   const paused = await program.evaluate(() => window.studioHost.renderer.timerText(window.studioHost.client.state.studio.timer));
   await sleep(1500);
   check(paused === await program.evaluate(() => window.studioHost.renderer.timerText(window.studioHost.client.state.studio.timer)), 'a paused timer stands still');
