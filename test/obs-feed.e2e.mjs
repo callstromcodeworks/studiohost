@@ -1,14 +1,14 @@
 // Browser test of the OBS output feed: plays the role of the plugin (starts the server with
 // --managed), waits for the server to ask for the feed once a guest joins, then sends a
 // solid-color picture and a tone the way the plugin does, and checks the guest sees and
-// hears them. Requires Playwright with Chromium (see test/e2e.mjs).
+// hears them. Also checks the guest's own audio comes back for their OBS mixer strip.
+// Requires Playwright with Chromium (see test/e2e.mjs).
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { createInterface } from 'node:readline';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -22,7 +22,29 @@ const server = spawn(process.execPath, [join(ROOT, 'data/app/server/index.js'), 
 });
 server.stderr.on('data', (d) => { if (process.env.VERBOSE) process.stderr.write('[server] ' + d); });
 const messages = [];
-createInterface({ input: server.stdout }).on('line', (l) => { try { messages.push(JSON.parse(l)); } catch { /* ignore */ } });
+/** Guest audio packets for the mixer strips: {id, rate, peak}. */
+const strips = [];
+let out = Buffer.alloc(0);
+server.stdout.on('data', (chunk) => {
+  out = Buffer.concat([out, chunk]);
+  for (;;) {
+    if (out[0] === 0x01) { // binary packet: 0x01, kind, uint32le length, payload
+      if (out.length < 6 || out.length < 6 + out.readUInt32LE(2)) break;
+      const p = out.subarray(6, 6 + out.readUInt32LE(2));
+      if (out[1] === 0x47) {
+        let peak = 0;
+        for (let i = 40; i + 1 < p.length; i += 2) peak = Math.max(peak, Math.abs(p.readInt16LE(i)) / 32768);
+        strips.push({ id: p.toString('ascii', 0, 36), rate: p.readUInt32LE(36), peak });
+      }
+      out = out.subarray(6 + p.length);
+    } else {
+      const nl = out.indexOf(0x0a);
+      if (nl < 0) break;
+      try { messages.push(JSON.parse(out.toString('utf8', 0, nl))); } catch { /* ignore */ }
+      out = out.subarray(nl + 1);
+    }
+  }
+});
 
 const fails = [];
 const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if (!cond) fails.push(msg); };
@@ -75,6 +97,9 @@ try {
   await guest.waitForFunction(() => document.querySelector('#lobby-video')?.srcObject?.getTracks().length >= 2);
   await guest.click('#join');
   check(await waitFor(() => messages.some((m) => m.type === 'feed' && m.on === true)), 'server asks for the feed once a guest joins');
+  const guestId = await guest.evaluate(() => window.studioHost.client.id);
+  check(await waitFor(() => messages.some((m) => m.type === 'guests' && m.items.some((g) => g.id === guestId && g.name === 'Ada'))), 'plugin is told about the guest for a mixer strip');
+  check(await waitFor(() => strips.some((x) => x.id === guestId && x.rate >= 8000 && x.peak > 0.01)), `guest's own audio reaches the plugin for the mixer strip (${strips.length} packets)`);
 
   // Send like the plugin: 30 fps video, audio in 1024-frame packets.
   let ticks = 0;

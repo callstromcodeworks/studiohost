@@ -19,6 +19,8 @@ export class WsConnection {
     /** @type {Buffer} */ this.buffer = Buffer.alloc(0);
     /** @type {Buffer[]} */ this.fragments = [];
     /** @type {((text: string) => void)|null} */ this.onmessage = null;
+    /** @type {((data: Buffer) => void)|null} */ this.onbinary = null;
+    /** Opcode of the message being received (fragments carry 0). */ this.opcode = 0;
     /** @type {(() => void)|null} */ this.onclose = null;
     /** @type {any} */ (socket).setNoDelay?.(true);
     socket.on('data', (chunk) => this.receive(chunk));
@@ -85,12 +87,14 @@ export class WsConnection {
       if (opcode === 0x9) { this.frame(0xa, payload); continue; }
       if (opcode === 0xa) continue;
       if (opcode === 0x1 || opcode === 0x2 || opcode === 0x0) {
+        if (opcode !== 0x0) this.opcode = opcode;
         this.fragments.push(payload);
         if (this.fragments.reduce((n, f) => n + f.length, 0) > MAX_MESSAGE) return this.close(1009, 'too big');
         if (fin) {
-          const text = Buffer.concat(this.fragments).toString('utf8');
+          const data = Buffer.concat(this.fragments);
           this.fragments = [];
-          this.onmessage?.(text);
+          if (this.opcode === 0x2) this.onbinary?.(data);
+          else this.onmessage?.(data.toString('utf8'));
         }
       }
     }

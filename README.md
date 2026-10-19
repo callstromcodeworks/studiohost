@@ -16,6 +16,8 @@ By Callstrom Code Works.
 - **Built-in scenes**, created once per scene collection (missing ones can be recreated from the dock or Tools menu; existing ones are never changed):
   - *Studio Host: Studio*, *Studio Host: Guest Screen Share*, *Studio Host: Guest 1…N*
 - **Studio Host Audio** in the mixer: the program audio (everyone on stage, plus clips) stays live whichever scene is showing.
+- **A mixer strip per guest** (*Studio Host: <name>*): its meter shows that guest's microphone, backstage or on stage, and its fader and mute button are the guest's volume and mute in the program, kept in step with the dock. The strips are on no mixer track, because the guests are already in Studio Host Audio; Studio Host keeps them that way so nobody is heard twice.
+- **Hotkeys** (Settings → Hotkeys, under *Studio Host*): bring guest N on or off stage, mute or unmute guest N, show the next banner, hide the banner, show or hide the ticker, and switch to the next layout. A Stream Deck can press them with its Hotkey action.
 - **Tools menu**: Create Built-in Scenes, Restart Server, Open Data Folder.
 
 Features of the studio itself: guest green room (device check, level meter), backstage/on-stage, hiding guests from the picture, layouts with and without content (below), guest screen sharing, branding, banners and tickers, video clips, per-guest volume/mute/talkback, a mix-minus return feed so every guest sees and hears the show, and private producer–guest chat. Not included on purpose: multistreaming, recording, audience comments, webinars and video repurposing — OBS or other tools handle those.

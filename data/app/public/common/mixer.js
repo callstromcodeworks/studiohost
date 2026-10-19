@@ -3,6 +3,8 @@
 //    captures when the Browser Source has "Control audio via OBS" enabled
 //  - each guest gets a "mix-minus": everyone they should hear, minus themselves, plus the
 //    OBS audio when the plugin sends it (which already leaves out Studio Host's guests)
+//  - inside OBS, each participant's own audio (before volume and mute) is also tapped and
+//    handed to onTap, which sends it to the plugin for that guest's strip in the OBS mixer
 
 export class AudioMixer {
   constructor() {
@@ -20,6 +22,12 @@ export class AudioMixer {
     this.obs = null;
     /** @type {Promise<void>|null} */ this.obsLoading = null;
     this.state = null;
+    /** Per-participant audio taps for the OBS mixer (see enableTaps). @type {Map<string, {input: GainNode, node: AudioWorkletNode}>} */
+    this.taps = new Map();
+    /** @type {Promise<void>|null} */ this.tapsLoading = null;
+    this.tapsReady = false;
+    /** Receives each tap's audio: mono 16-bit samples at `rate` Hz. @type {((pid: string, rate: number, samples: Int16Array) => void)|null} */
+    this.onTap = null;
     // Browsers may start the context suspended until a user gesture; keep nudging it.
     setInterval(() => { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); }, 1000);
     setInterval(() => this.sampleLevels(), 100);
@@ -44,6 +52,8 @@ export class AudioMixer {
   /** @param {string} pid */
   dropGuest(pid) {
     for (const [key, src] of this.sources) if (src.pid === pid) this.removeSource(key);
+    const tap = this.taps.get(pid);
+    if (tap) { tap.input.disconnect(); tap.node.disconnect(); tap.node.port.close(); this.taps.delete(pid); }
     const dest = this.mixMinus.get(pid);
     if (dest) {
       for (const src of this.sources.values()) { src.sends.get(pid)?.disconnect(); src.sends.delete(pid); }
@@ -72,7 +82,38 @@ export class AudioMixer {
     const src = { stream, node, program, analyser, peak: 0, sends: new Map(), pid, trackId: stream.getAudioTracks()[0].id };
     this.sources.set(key, src);
     for (const target of this.mixMinus.keys()) this.connectSend(src, target);
+    this.connectTap(src);
     this.apply();
+  }
+
+  /** Starts tapping each participant's audio for onTap (once; the plugin is there to take it). */
+  enableTaps() {
+    if (this.tapsLoading) return;
+    const url = URL.createObjectURL(new Blob([GUEST_TAP_WORKLET], { type: 'text/javascript' }));
+    this.tapsLoading = this.ctx.audioWorklet.addModule(url).then(() => {
+      // The taps feed a silent gain into the output so the browser keeps running them.
+      this.tapSink = this.ctx.createGain();
+      this.tapSink.gain.value = 0;
+      this.tapSink.connect(this.ctx.destination);
+      this.tapsReady = true;
+      for (const src of this.sources.values()) this.connectTap(src);
+    }).catch((err) => console.warn('[mixer] guest audio for the OBS mixer unavailable', err));
+  }
+
+  /** @param {any} src */
+  connectTap(src) {
+    if (!this.tapsReady) return;
+    let tap = this.taps.get(src.pid);
+    if (!tap) {
+      const input = this.ctx.createGain();
+      const node = new AudioWorkletNode(this.ctx, 'guest-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      const pid = src.pid;
+      node.port.onmessage = (e) => this.onTap?.(pid, this.ctx.sampleRate, new Int16Array(e.data));
+      input.connect(node).connect(/** @type {GainNode} */ (this.tapSink));
+      tap = { input, node };
+      this.taps.set(pid, tap);
+    }
+    src.node.connect(tap.input);
   }
 
   /** @param {any} src @param {string} target */
@@ -170,6 +211,31 @@ export class AudioMixer {
     }
   }
 }
+
+// Collects a participant's audio as mono 16-bit samples and posts them in blocks of 1024 frames
+// (about 20 ms). Nothing is posted while no audio is connected.
+const GUEST_TAP_WORKLET = `
+class GuestTap extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(1024); this.n = 0; }
+  process(inputs) {
+    const chans = inputs[0];
+    if (!chans || !chans.length) return true;
+    const len = chans[0].length, k = chans.length;
+    for (let i = 0; i < len; i++) {
+      let v = 0;
+      for (let c = 0; c < k; c++) v += chans[c][i];
+      v /= k;
+      this.buf[this.n++] = (v > 1 ? 1 : v < -1 ? -1 : v) * 32767;
+      if (this.n === this.buf.length) {
+        this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
+        this.buf = new Int16Array(1024); this.n = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('guest-tap', GuestTap);
+`;
 
 // Plays the OBS audio for guests from a ring buffer. OBS audio arrives in bursts (it comes
 // through the plugin, the server and a WebSocket), so playback starts once ~80 ms is buffered.

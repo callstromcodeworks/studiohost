@@ -60,6 +60,16 @@ export class StudioClient extends EventTarget {
     connect();
   }
 
+  /**
+   * Sends binary data to the server over the event channel (the program page's guest audio for
+   * the OBS mixer). Dropped while disconnected or when the connection is backed up.
+   * @param {ArrayBuffer|ArrayBufferView} data
+   */
+  sendBinary(data) {
+    const ws = this.events;
+    if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 1 << 20) ws.send(data);
+  }
+
   /** @param {string} type @param {any} detail */
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 

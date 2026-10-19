@@ -30,9 +30,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace studiohost {
 
+class GuestMixer;
 class ObsFeed;
 class ServerProcess;
 class StudioDock;
+class StudioHotkeys;
 
 // Ties everything together: runs the server, relays OBS events and requests between the
 // server and OBS, manages the dock, the studio hub browser, built-in scenes and the
@@ -46,6 +48,7 @@ public:
 
 private:
 	static void handleFrontendEvent(enum obs_frontend_event event, void *data);
+	static void handleFrontendSave(obs_data_t *data, bool saving, void *param);
 	void onFrontendEvent(enum obs_frontend_event event);
 	void onServerMessage(const QByteArray &json);
 	void onServerFailed(const QString &reason);
@@ -75,6 +78,8 @@ private:
 
 	ServerProcess *server = nullptr;
 	ObsFeed *feed = nullptr;
+	GuestMixer *guestMixer = nullptr;
+	StudioHotkeys *hotkeys = nullptr;
 	StudioDock *dock = nullptr;
 	QDialog *wizard = nullptr;
 	StudioDock *wizardView = nullptr;

@@ -28,7 +28,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 namespace studiohost {
 
 // Runs the Studio Host server (data/app/server/index.js) on the bundled Node.js runtime and
-// exchanges line-delimited JSON with it over stdin/stdout (plus binary OBS feed packets on stdin). stderr is copied to the OBS log.
+// exchanges line-delimited JSON with it over stdin/stdout, plus binary packets: the OBS feed on
+// stdin, guest audio for the mixer strips on stdout. stderr is copied to the OBS log.
 // The server exits on its own when stdin closes, so it never outlives OBS.
 class ServerProcess : public QObject {
 	Q_OBJECT
@@ -52,6 +53,7 @@ public:
 
 signals:
 	void messageReceived(const QByteArray &json);
+	void packetReceived(char kind, const QByteArray &payload);
 	void failed(const QString &reason); // could not start, or crashed repeatedly
 	void stopped();
 

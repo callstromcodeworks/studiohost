@@ -108,6 +108,11 @@ export class Studio {
     /** Called when the widget list changes (plugin only). @type {((items: any[]) => void)|null} */
     this.onWidgets = null;
     /** @type {string} */ this.lastWidgetsKey = '';
+    /** Called when the guests (names, volume, mute) change, for their OBS mixer strips (plugin only). @type {((items: any[]) => void)|null} */
+    this.onGuests = null;
+    /** @type {string} */ this.lastGuestsKey = '';
+    /** Called with each packet of guest audio the program page sends (plugin only). @type {((data: Buffer) => void)|null} */
+    this.onGuestAudio = null;
     /** Called when the slot count changes. @type {((count: number) => void)|null} */
     this.onSlots = null;
     /** Called to start/stop the OBS output feed (plugin only). @type {((on: boolean) => void)|null} */
@@ -219,6 +224,8 @@ export class Studio {
         if (client.role === 'program') this.broadcastState(); // program went offline
       }
     };
+    // The program page sends each guest's audio for the OBS mixer.
+    if (client.role === 'program') conn.onbinary = (data) => { if (client.conn === conn) this.onGuestAudio?.(data); };
     if (client.role === 'program') this.broadcastState(); // program came online
   }
 
@@ -266,6 +273,28 @@ export class Studio {
     this.notifyContent(state);
     this.updateFeed(state);
     this.notifyWidgets();
+    this.notifyGuests();
+  }
+
+  /** Sends the plugin the guests for its mixer strips when they change, or always with `force`. */
+  notifyGuests(force = false) {
+    const items = [...this.participants.values()].map((p) => ({ id: p.id, name: p.name, volume: p.volume, muted: p.hostMuted }));
+    const key = JSON.stringify(items);
+    if (!force && key === this.lastGuestsKey) return;
+    this.lastGuestsKey = key;
+    this.onGuests?.(items);
+  }
+
+  /**
+   * A guest's volume or mute changed on their OBS mixer strip.
+   * @param {string} id @param {{volume?: unknown, muted?: unknown}} mix
+   */
+  setMix(id, mix) {
+    const p = this.participants.get(id);
+    if (!p) return;
+    if (typeof mix.volume === 'number' && Number.isFinite(mix.volume)) p.volume = Math.max(0, Math.min(2, mix.volume));
+    if (typeof mix.muted === 'boolean') p.hostMuted = mix.muted;
+    this.broadcastState();
   }
 
   /** Sends the plugin the widget list (with URLs) when it changes, or always with `force`. */
@@ -421,7 +450,7 @@ export class Studio {
   // ---- host actions ----------------------------------------------------
   /**
    * Applies a producer action. Returns an error string, or null on success.
-   * @param {Client} client @param {any} a
+   * @param {Client|null} client the producer page, or null for an OBS hotkey @param {any} a
    * @returns {string|null}
    */
   hostAction(client, a) {
@@ -587,6 +616,44 @@ export class Studio {
     if (a.action === 'slots') this.onSlots?.(s.slots);
     this.broadcastState();
     return null;
+  }
+
+  /**
+   * Acts on an OBS hotkey (see studio-hotkeys.cpp). Returns an error string, or null.
+   * @param {string} action @param {number} slot guest slot, for the per-guest hotkeys
+   * @returns {string|null}
+   */
+  hotkey(action, slot) {
+    const s = this.studio;
+    const guest = [...this.participants.values()].find((p) => p.slot === slot);
+    switch (action) {
+      case 'stage':
+        if (!guest) return `nobody is in slot ${slot}`;
+        return this.hostAction(null, { action: 'stage', participant: guest.id, on: !guest.onStage });
+      case 'mute':
+        if (!guest) return `nobody is in slot ${slot}`;
+        return this.hostAction(null, { action: 'hostMute', participant: guest.id, on: !guest.hostMuted });
+      case 'nextBanner': {
+        const banners = s.banners.filter((b) => !b.ticker);
+        if (!banners.length) return 'there are no banners';
+        const next = banners[(banners.findIndex((b) => b.id === s.activeBanner) + 1) % banners.length];
+        if (next.id === s.activeBanner) return null; // the only banner is already showing
+        return this.hostAction(null, { action: 'bannerShow', id: next.id });
+      }
+      case 'hideBanner': return this.hostAction(null, { action: 'bannerShow', id: null });
+      case 'ticker': {
+        if (s.activeTicker) return this.hostAction(null, { action: 'tickerHide' });
+        const ticker = s.banners.find((b) => b.ticker);
+        return ticker ? this.hostAction(null, { action: 'bannerShow', id: ticker.id }) : 'there is no ticker';
+      }
+      case 'nextLayout': {
+        // Whichever layout family is in use: with content, or guests only.
+        const list = this.contentState() ? CONTENT_LAYOUTS : GUEST_LAYOUTS;
+        const current = this.contentState() ? s.contentLayout : s.layout;
+        return this.hostAction(null, { action: 'layout', layout: list[(list.indexOf(current) + 1) % list.length] });
+      }
+      default: return 'unknown hotkey';
+    }
   }
 
   /** @param {any} id @param {'image'|'video'} kind */

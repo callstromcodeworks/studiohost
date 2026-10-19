@@ -25,6 +25,10 @@ if (channel) {
   studio.onContent = (c) => channel.send({ type: 'content', ...c });
   studio.onFeedWanted = (on) => channel.send({ type: 'feed', on });
   studio.onWidgets = (items) => channel.send({ type: 'widgets', items });
+  studio.onGuests = (items) => channel.send({ type: 'guests', items });
+  studio.onGuestAudio = (data) => { if (data[0] === 0x47 && data.length > 41) channel.sendPacket('G', data.subarray(1)); };
+  channel.onGuestMix = (m) => studio.setMix(m.id, m);
+  channel.onHotkey = (m) => { const err = studio.hotkey(m.action, Number(m.slot) || 0); if (err) console.error(`[hotkey] ${m.action}: ${err}`); };
   channel.onFeed = (kind, payload) => studio.forwardFeed(kind, payload);
 }
 
@@ -179,6 +183,7 @@ async function start() {
       configured: network.configured, publicUrl: network.publicUrl,
     });
     studio.notifyWidgets(true);
+    studio.notifyGuests(true);
   } else {
     console.log(`
   Studio Host is running

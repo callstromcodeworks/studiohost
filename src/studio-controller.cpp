@@ -17,9 +17,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "studio-controller.hpp"
+#include "guest-mixer.hpp"
 #include "obs-feed.hpp"
 #include "server-process.hpp"
 #include "studio-dock.hpp"
+#include "studio-hotkeys.hpp"
 #include "studio-scenes.hpp"
 #include "studio-sources.hpp"
 
@@ -82,8 +84,18 @@ StudioController::StudioController()
 	connect(server, &ServerProcess::messageReceived, this, &StudioController::onServerMessage);
 	connect(server, &ServerProcess::failed, this, &StudioController::onServerFailed);
 	feed = new ObsFeed(server, this);
+	guestMixer = new GuestMixer(server, this);
+	connect(server, &ServerProcess::packetReceived, this, [this](char kind, const QByteArray &payload) {
+		if (kind == 'G')
+			guestMixer->pushAudio(payload);
+	});
+
+	hotkeys = new StudioHotkeys(server, pluginConfig, this);
+	hotkeys->ensureSlots(slotCount);
 
 	obs_frontend_add_event_callback(handleFrontendEvent, this);
+	// OBS saves when hotkeys are changed in its settings (among other times): keep them then.
+	obs_frontend_add_save_callback(handleFrontendSave, this);
 
 	// Keep the dock's list of OBS sources (for content) current. Sources are created and
 	// removed on any thread, often in bursts, so coalesce into one status update.
@@ -125,6 +137,7 @@ StudioController::~StudioController()
 {
 	shutdown();
 	obs_frontend_remove_event_callback(handleFrontendEvent, this);
+	obs_frontend_remove_save_callback(handleFrontendSave, this);
 	obs_data_release(pluginConfig);
 	obs_data_array_release(widgets);
 }
@@ -142,6 +155,10 @@ void StudioController::shutdown()
 	if (shuttingDown)
 		return;
 	shuttingDown = true;
+	if (hotkeys) {
+		hotkeys->save();
+		savePluginConfig();
+	}
 	signal_handler_t *sh = obs_get_signal_handler();
 	signal_handler_disconnect(sh, "source_create", handleSourceListSignal, this);
 	signal_handler_disconnect(sh, "source_destroy", handleSourceListSignal, this);
@@ -155,6 +172,8 @@ void StudioController::shutdown()
 		dock->shutdown();
 	stop_program_browser();
 	detach_global_audio();
+	if (guestMixer)
+		guestMixer->detach();
 	if (server)
 		server->stop();
 }
@@ -207,12 +226,22 @@ void StudioController::handleFrontendEvent(enum obs_frontend_event event, void *
 	static_cast<StudioController *>(data)->onFrontendEvent(event);
 }
 
+void StudioController::handleFrontendSave(obs_data_t *, bool saving, void *param)
+{
+	auto *self = static_cast<StudioController *>(param);
+	if (!saving || !self->hotkeys)
+		return;
+	self->hotkeys->save();
+	self->savePluginConfig();
+}
+
 void StudioController::onFrontendEvent(enum obs_frontend_event event)
 {
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		obsLoaded = true;
 		attach_global_audio();
+		guestMixer->attach();
 		if (serverReady)
 			start_program_browser();
 		rename_legacy_builtins();
@@ -224,11 +253,13 @@ void StudioController::onFrontendEvent(enum obs_frontend_event event)
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
 		detach_global_audio();
+		guestMixer->detach();
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 		if (!obsLoaded)
 			break;
 		attach_global_audio();
+		guestMixer->attach();
 		rename_legacy_builtins();
 		setupScenesForCollectionOnce();
 		syncWidgets();
@@ -274,8 +305,10 @@ void StudioController::onServerMessage(const QByteArray &json)
 		if (port > 0 && port < 65536)
 			localPort = static_cast<int>(port);
 		long long n = obs_data_get_int(msg, "slots");
-		if (n >= 1 && n <= 16)
+		if (n >= 1 && n <= 16) {
 			slotCount = static_cast<int>(n);
+			hotkeys->ensureSlots(slotCount);
+		}
 		std::string base = "http://127.0.0.1:" + std::to_string(localPort);
 		set_base_url(base); // points every page at the server (no-op if unchanged)
 		if (obsLoaded)
@@ -311,10 +344,16 @@ void StudioController::onServerMessage(const QByteArray &json)
 		obs_data_array_release(widgets);
 		widgets = obs_data_get_array(msg, "items");
 		syncWidgets();
+	} else if (strcmp(type, "guests") == 0) {
+		obs_data_array_t *items = obs_data_get_array(msg, "items");
+		if (items)
+			guestMixer->setGuests(items);
+		obs_data_array_release(items);
 	} else if (strcmp(type, "slots") == 0) {
 		long long n = obs_data_get_int(msg, "count");
 		if (n >= 1 && n <= 16) {
 			slotCount = static_cast<int>(n);
+			hotkeys->ensureSlots(slotCount);
 			// Collections that use the built-in scenes get scenes for the new slots too.
 			if (obsLoaded && scenesCreated(currentCollection()))
 				ensure_builtin_scenes(slotCount);

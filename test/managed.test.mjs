@@ -1,5 +1,5 @@
 // Plays the role of the OBS plugin: starts the server with --managed and speaks
-// the stdin/stdout JSON-lines protocol to it.
+// the stdin/stdout protocol to it (JSON lines, plus binary packets on stdout).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -7,7 +7,6 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Ports vary per run so a leftover server from an interrupted run cannot collide.
@@ -71,11 +70,28 @@ before(async () => {
     env: { ...process.env, STUDIOHOST_DATA: data, STUDIOHOST_LOCAL_PORT: String(LOCAL), STUDIOHOST_PUBLIC_PORT: String(PUB), STUDIOHOST_NETWORK: 'lan' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  createInterface({ input: server.stdout }).on('line', (line) => {
-    const msg = JSON.parse(line); // every stdout line must be protocol JSON
+  const deliver = (msg) => {
     const i = waiters.findIndex((w) => w.pred(msg));
     if (i >= 0) waiters.splice(i, 1)[0].resolve(msg);
     else inbox.push(msg);
+  };
+  let buf = Buffer.alloc(0);
+  server.stdout.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf[0] === 0x01) { // binary packet: 0x01, kind, uint32le length, payload
+        if (buf.length < 6 || buf.length < 6 + buf.readUInt32LE(2)) break;
+        const len = buf.readUInt32LE(2);
+        deliver({ type: 'packet', kind: String.fromCharCode(buf[1]), payload: buf.subarray(6, 6 + len) });
+        buf = buf.subarray(6 + len);
+      } else {
+        const nl = buf.indexOf(0x0a);
+        if (nl < 0) break;
+        const line = buf.toString('utf8', 0, nl);
+        buf = buf.subarray(nl + 1);
+        if (line.trim()) deliver(JSON.parse(line)); // every other stdout line must be protocol JSON
+      }
+    }
   });
   ready = await nextMessage((m) => m.type === 'ready', 10000);
 });
@@ -196,6 +212,73 @@ test('widgets reach the plugin with their links; pages never see the links', asy
   await nextMessage((m) => m.type === 'widgets' && m.items[0]?.visible === false);
   assert.equal((await post('action', { action: 'widgetDelete', id }, host)).status, 200);
   await nextMessage((m) => m.type === 'widgets' && m.items.length === 0);
+});
+
+test('guests get OBS mixer strips: their audio goes to the plugin, and strip changes come back', async () => {
+  const host = (await post('join', { role: 'host' })).body;
+  const guest = (await post('join', { role: 'guest', name: 'Mixer Guest' })).body;
+  const listed = await nextMessage((m) => m.type === 'guests' && m.items.some((g) => g.id === guest.id));
+  assert.deepEqual(listed.items.find((g) => g.id === guest.id), { id: guest.id, name: 'Mixer Guest', volume: 1, muted: false });
+
+  const program = (await post('join', { role: 'program' })).body;
+  const ws = new WebSocket(`ws://127.0.0.1:${LOCAL}/api/ws?id=${program.id}&token=${program.token}`);
+  await new Promise((resolve) => { ws.onmessage = (ev) => { if (typeof ev.data === 'string' && JSON.parse(ev.data).type === 'welcome') resolve(undefined); }; });
+  const packet = Buffer.alloc(41 + 8);
+  packet[0] = 0x47; packet.write(guest.id, 1, 'ascii'); packet.writeUInt32LE(48000, 37);
+  for (let i = 0; i < 4; i++) packet.writeInt16LE(1000 * i, 41 + i * 2);
+  ws.send(packet);
+  const got = await nextMessage((m) => m.type === 'packet' && m.kind === 'G');
+  assert.equal(got.payload.toString('ascii', 0, 36), guest.id);
+  assert.equal(got.payload.readUInt32LE(36), 48000);
+  assert.equal(got.payload.readInt16LE(40 + 6), 3000);
+  ws.close();
+
+  send({ type: 'guest-mix', id: guest.id, volume: 0.5 });
+  send({ type: 'guest-mix', id: guest.id, muted: true });
+  const changed = await nextMessage((m) => m.type === 'guests' && m.items.some((g) => g.id === guest.id && g.muted));
+  assert.deepEqual(changed.items.find((g) => g.id === guest.id), { id: guest.id, name: 'Mixer Guest', volume: 0.5, muted: true });
+  const state = (await welcome(`http://127.0.0.1:${LOCAL}`, host)).state;
+  const p = state.participants.find((x) => x.id === guest.id);
+  assert.equal(p.volume, 0.5);
+  assert.equal(p.hostMuted, true);
+});
+
+test('OBS hotkeys act on the studio', async () => {
+  const host = (await post('join', { role: 'host' })).body;
+  const state = async () => (await welcome(`http://127.0.0.1:${LOCAL}`, host)).state;
+  const guest = (await post('join', { role: 'guest', name: 'Hotkey Guest' })).body;
+  const slot = (await state()).participants.find((p) => p.id === guest.id).slot;
+  send({ type: 'hotkey', action: 'stage', slot });
+  send({ type: 'hotkey', action: 'mute', slot });
+  await new Promise((r) => setTimeout(r, 200));
+  let st = await state();
+  assert.ok(st.stage.includes(guest.id), 'on stage');
+  assert.equal(st.participants.find((p) => p.id === guest.id).hostMuted, true);
+
+  await post('action', { action: 'bannerSave', text: 'First' }, host);
+  await post('action', { action: 'bannerSave', text: 'Second' }, host);
+  await post('action', { action: 'bannerSave', text: 'Breaking news', ticker: true }, host);
+  const ids = (await state()).studio.banners.map((b) => b.id);
+  send({ type: 'hotkey', action: 'nextBanner' });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await state()).studio.activeBanner, ids[0]);
+  send({ type: 'hotkey', action: 'nextBanner' });
+  send({ type: 'hotkey', action: 'ticker' });
+  await new Promise((r) => setTimeout(r, 100));
+  st = await state();
+  assert.equal(st.studio.activeBanner, ids[1]);
+  assert.equal(st.studio.activeTicker, ids[2]);
+  send({ type: 'hotkey', action: 'hideBanner' });
+  send({ type: 'hotkey', action: 'ticker' });
+  const layout = st.studio.layout;
+  send({ type: 'hotkey', action: 'nextLayout' });
+  send({ type: 'hotkey', action: 'stage', slot });
+  await new Promise((r) => setTimeout(r, 200));
+  st = await state();
+  assert.equal(st.studio.activeBanner, null);
+  assert.equal(st.studio.activeTicker, null);
+  assert.notEqual(st.studio.layout, layout);
+  assert.ok(!st.stage.includes(guest.id), 'off stage again');
 });
 
 test('exits when the plugin closes stdin', async () => {

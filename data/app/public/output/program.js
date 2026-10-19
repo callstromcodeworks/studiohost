@@ -224,7 +224,21 @@ async function main() {
   };
   bank.onChange(syncAudio);
 
+  // Inside OBS, each guest's audio also goes to the plugin, which shows it as that guest's strip
+  // in the OBS audio mixer: 'G', participant id (36 characters), uint32le rate, int16 mono samples.
+  const ascii = new TextEncoder();
+  mixer.onTap = (pid, rate, samples) => {
+    if (pid.length !== 36) return;
+    const packet = new Uint8Array(41 + samples.byteLength);
+    packet[0] = 0x47;
+    packet.set(ascii.encode(pid), 1);
+    new DataView(packet.buffer).setUint32(37, rate, true);
+    packet.set(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), 41);
+    client.sendBinary(packet);
+  };
+
   const onState = (st) => {
+    if (st.obs?.managed) mixer.enableTaps();
     bank.setState(st);
     renderer.setState(st);
     mixer.setState(st);
