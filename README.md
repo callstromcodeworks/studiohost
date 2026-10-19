@@ -147,7 +147,7 @@ For when you manage the network yourself:
 
 ### Inviting guests
 
-Copy the **Invite link** from the dock's top bar or Setup tab and send it however you like. One link works for every guest; each types their name in the green room. To appear on camera yourself, open **Join on camera yourself** (Setup tab) in a normal browser. If your own mic is already an OBS input, mark yourself **Talkback only** so your voice isn't doubled in the program.
+Copy the **Invite link** from the dock's top bar or Setup tab and send it however you like. One link works for every guest; each types their name in the green room. The link changes by itself after an hour, so a link that gets passed around stops working; copy it again before inviting more guests. **Invite link expires after** (Setup tab → Connection extras) sets this to 1, 2, 6, 12 or 24 hours, or Never, and **New link now** replaces it on the spot. Guests already in the studio aren't affected, and a guest whose connection drops can rejoin from the same browser tab after the link has changed (for up to 12 hours), unless you removed them. To appear on camera yourself, open **Join on camera yourself** (Setup tab) in a normal browser. If your own mic is already an OBS input, mark yourself **Talkback only** so your voice isn't doubled in the program.
 
 Media (audio and video) still travels peer-to-peer between each guest's browser and this computer over WebRTC, separately from the guest port. That works on most home networks; a TURN server covers the rest.
 

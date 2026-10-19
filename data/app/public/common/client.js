@@ -1,5 +1,5 @@
 // Browser side of the Studio Host signaling protocol:
-// POST /api/join, then a Server-Sent Events stream for everything the server pushes.
+// POST /api/join, then a WebSocket for everything the server pushes.
 
 export class StudioClient extends EventTarget {
   /** @param {'guest'|'host'|'program'|'slot'} role */
@@ -17,7 +17,7 @@ export class StudioClient extends EventTarget {
   }
 
   /**
-   * @param {{name?: string, key?: string, slot?: number, asHost?: boolean}} [opts]
+   * @param {{name?: string, key?: string, ticket?: string, slot?: number, asHost?: boolean}} [opts]
    */
   async join(opts = {}) {
     const res = await fetch('/api/join', {

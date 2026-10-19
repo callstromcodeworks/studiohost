@@ -94,3 +94,45 @@ test('self-signed certificate is valid X.509 with SANs', () => {
   assert.match(x.subjectAltName, /DNS:studio\.example\.com/);
   assert.match(x.subjectAltName, /IP Address:127\.0\.0\.1/);
 });
+
+test('a new invite link retires the old one; guests who joined can still rejoin unless removed', async () => {
+  const host = (await post('join', { role: 'host' })).body;
+  const before = (await post('info', {}, { session: host })).body;
+  const oldKey = new URL(before.invite).searchParams.get('k');
+  assert.ok(before.inviteExpiresAt > Date.now(), 'links expire by default');
+  assert.equal(before.inviteExpiryHours, 1);
+  const joined = (await post('join', { role: 'guest', name: 'Ticket', key: oldKey }, { pub: true })).body;
+  assert.ok(joined.rejoin, 'guests get a rejoin ticket');
+
+  assert.equal((await post('invite-new', {}, { session: host })).status, 200);
+  const after = (await post('info', {}, { session: host })).body;
+  const newKey = new URL(after.invite).searchParams.get('k');
+  assert.notEqual(newKey, oldKey);
+
+  const stale = await post('join', { role: 'guest', name: 'Late', key: oldKey }, { pub: true });
+  assert.equal(stale.status, 403);
+  assert.match(stale.body.error, /expired/);
+  assert.equal((await post('join', { role: 'guest', name: 'Fresh', key: newKey }, { pub: true })).status, 200);
+
+  const back = await post('join', { role: 'guest', name: 'Ticket', key: oldKey, ticket: joined.rejoin }, { pub: true });
+  assert.equal(back.status, 200, 'the ticket gets a guest back in after the link changed');
+  assert.equal((await post('action', { action: 'kick', participant: back.body.id }, { session: host })).status, 200);
+  assert.equal((await post('join', { role: 'guest', name: 'Ticket', key: oldKey, ticket: joined.rejoin }, { pub: true })).status, 403, 'removed guests cannot rejoin');
+  assert.equal((await post('join', { role: 'guest', name: 'Ticket', key: oldKey, ticket: back.body.rejoin }, { pub: true })).status, 403);
+});
+
+test('invite expiry is a studio setting with fixed choices', async () => {
+  const host = (await post('join', { role: 'host' })).body;
+  assert.equal((await post('config-save', { inviteExpiryHours: 5 }, { session: host })).status, 400);
+  assert.equal((await post('config-save', { inviteExpiryHours: 0 }, { session: host })).status, 200);
+  assert.equal((await post('config-get', {}, { session: host })).body.inviteExpiryHours, 0);
+  assert.equal((await post('info', {}, { session: host })).body.inviteExpiresAt, null);
+  assert.equal((await post('config-save', { inviteExpiryHours: 24 }, { session: host })).status, 200);
+  const info = (await post('info', {}, { session: host })).body;
+  assert.ok(Math.abs(info.inviteExpiresAt - (Date.now() + 24 * 3600_000)) < 5000);
+});
+
+test('malformed JSON is refused with 400', async () => {
+  const r = await fetch(`http://127.0.0.1:${LOCAL}/api/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{nope' });
+  assert.equal(r.status, 400);
+});

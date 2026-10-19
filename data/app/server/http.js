@@ -1,10 +1,11 @@
 // @ts-check
 import { createReadStream, existsSync, mkdirSync, statSync, unlinkSync, createWriteStream } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { DATA_DIR, ROOT_DIR } from './config.js';
 import { cleanText } from './studio.js';
 import { acceptUpgrade } from './ws.js';
+import { safeEqual } from './invite.js';
 
 const PUBLIC_DIR = join(ROOT_DIR, 'public');
 export const UPLOAD_DIR = join(DATA_DIR, 'uploads');
@@ -21,7 +22,7 @@ const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.mov']);
 
 /**
- * @param {{studio: import('./studio.js').Studio, config: import('./config.js').StudioConfig, links: () => object,
+ * @param {{studio: import('./studio.js').Studio, config: import('./config.js').StudioConfig, invite: import('./invite.js').Invite, links: () => object,
  *   obsSetup: () => Promise<string>, obsScene: (scene: string, slot?: number) => Promise<string>,
  *   configView: () => object, configSave: (body: any) => string, managed: boolean,
  *   network: {status: () => any, apply: (b: any) => any, recheck: () => Promise<any>, openWizard: () => boolean, finished: () => void}}} ctx
@@ -83,8 +84,15 @@ export function createHandler(ctx, localListener) {
       const key = typeof body.key === 'string' ? body.key : '';
       const hostKeyOk = safeEqual(key, config.hostKey);
       if (!['guest', 'host', 'program', 'slot', 'feature'].includes(role)) return json(res, 400, { error: 'bad role' });
+      /** The rejoin ticket a guest who was already in the studio comes back with. */
+      let ticket = null;
       if (role === 'guest') {
-        if (!isTrusted(req) && !hostKeyOk && !safeEqual(key, config.guestKey)) return json(res, 403, { error: 'This invite link is not valid. Ask the host for a new one.' });
+        ticket = ctx.invite.checkTicket(body.ticket);
+        if (!isTrusted(req) && !hostKeyOk && !ticket) {
+          const invite = ctx.invite.check(key);
+          if (invite === 'expired') return json(res, 403, { error: 'This invite link has expired. Ask the host for a new one.' });
+          if (invite !== 'ok') return json(res, 403, { error: 'This invite link is not valid. Ask the host for a new one.' });
+        }
         if (studio.participants.size >= config.maxGuests) return json(res, 409, { error: 'The studio is full.' });
       } else if (!isTrusted(req) && !hostKeyOk) {
         return json(res, 403, { error: 'Host key required.' });
@@ -94,6 +102,7 @@ export function createHandler(ctx, localListener) {
       return json(res, 200, {
         id: client.id, token: client.token, iceServers: config.iceServers, output: config.output, guestFeed: config.guestFeed,
         debug: process.env.STUDIOHOST_DEBUG === '1',
+        rejoin: role === 'guest' ? ctx.invite.ticket(client.id, ticket) : undefined,
       });
     }
 
@@ -137,12 +146,17 @@ export function createHandler(ctx, localListener) {
       case 'action': {
         if (client.role !== 'host') return json(res, 403, { error: 'host only' });
         if (body.action === 'assetDelete') removeUpload(studio, body.asset);
+        if (body.action === 'kick' && typeof body.participant === 'string') ctx.invite.revoke(body.participant);
         const err = studio.hostAction(client, body);
         return err ? json(res, 400, { error: err }) : json(res, 200, { ok: true });
       }
       case 'info':
         if (client.role !== 'host') return json(res, 403, { error: 'host only' });
         return json(res, 200, ctx.links());
+      case 'invite-new':
+        if (client.role !== 'host') return json(res, 403, { error: 'host only' });
+        ctx.invite.rotate();
+        return json(res, 200, { ok: true });
       case 'obs-setup':
         if (client.role !== 'host') return json(res, 403, { error: 'host only' });
         try { return json(res, 200, { message: await ctx.obsSetup() }); }
@@ -311,11 +325,6 @@ export function isLoopback(addr) {
   return !!addr && (addr === '::1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.'));
 }
 
-/** @param {string} a @param {string} b */
-function safeEqual(a, b) {
-  const x = Buffer.from(a), y = Buffer.from(b);
-  return x.length === y.length && x.length > 0 && timingSafeEqual(x, y);
-}
 
 /**
  * One OBS-log line describing a guest's program-audio playout report (see guest.js).

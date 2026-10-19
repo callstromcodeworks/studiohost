@@ -8,11 +8,15 @@ import { CONFIG_PATH, DATA_DIR, MANAGED, loadConfig, saveConfigPatch } from './c
 import { createHandler, createUpgradeHandler } from './http.js';
 import { PluginChannel } from './ipc.js';
 import { Studio } from './studio.js';
+import { Invite, INVITE_EXPIRY_CHOICES } from './invite.js';
 import { NetworkManager, defaultNetworkSettings, validateSettings } from './network.js';
 
 const channel = MANAGED ? new PluginChannel() : null;
 const config = loadConfig();
 const studio = new Studio(config);
+const invite = new Invite(config, saveConfigPatch);
+// Producer pages show the invite link and when it changes next.
+invite.on('changed', () => studio.broadcast({ type: 'invite' }, (c) => c.role === 'host'));
 
 studio.obs = { managed: MANAGED, ...(channel?.status || {}) };
 if (channel) {
@@ -65,7 +69,9 @@ function links() {
   const local = `http://127.0.0.1:${config.localPort}`;
   const pub = network.publicUrl;
   return {
-    invite: pub ? `${pub}/guest/?k=${config.guestKey}` : '',
+    invite: pub ? `${pub}/guest/?k=${invite.key}` : '',
+    inviteExpiresAt: invite.expiresAt,
+    inviteExpiryHours: invite.hours,
     hostJoin: pub ? `${pub}/guest/?k=${config.hostKey}&host=1` : '',
     hostRemote: pub ? `${pub}/host/?key=${config.hostKey}` : '',
     dock: `${local}/host/`,
@@ -82,7 +88,7 @@ function links() {
 
 /** Studio settings that apply to both setup modes (no restart needed). */
 function configView() {
-  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort, guestFeed: config.guestFeed };
+  return { iceServers: config.iceServers, maxGuests: config.maxGuests, localPort: config.localPort, guestFeed: config.guestFeed, inviteExpiryHours: invite.hours };
 }
 
 /** @param {any} body @returns {string} */
@@ -108,6 +114,8 @@ function configSave(body) {
     if (codec !== 'auto' && codec !== 'h264') throw new Error('Program video codec must be "auto" or "h264".');
     patch.guestFeed = { ...config.guestFeed, maxKbps, totalKbps, codec };
   }
+  const expiry = 'inviteExpiryHours' in body ? Number(body.inviteExpiryHours) : invite.hours;
+  if (!INVITE_EXPIRY_CHOICES.includes(expiry)) throw new Error('Invite links can expire after 1, 2, 6, 12 or 24 hours, or never.');
   let restart = false;
   if ('localPort' in body) {
     const n = Number(body.localPort);
@@ -115,6 +123,7 @@ function configSave(body) {
     if (n !== config.localPort) { patch.localPort = n; restart = true; }
   }
   saveConfigPatch(patch);
+  if (expiry !== invite.hours) invite.setExpiry(expiry);
   Object.assign(config, restart ? { ...patch, localPort: config.localPort } : patch);
   if (patch.guestFeed) studio.broadcast({ type: 'guest-feed', guestFeed: patch.guestFeed }, (c) => c.role === 'program');
   if (restart && channel) {
@@ -125,7 +134,7 @@ function configSave(body) {
 }
 
 const ctx = {
-  studio, config, links, configView, configSave,
+  studio, config, invite, links, configView, configSave,
   managed: MANAGED,
   obsSetup: () => (channel ? channel.request('setupScenes') : Promise.reject(new Error('Creating scenes needs the Studio Host OBS plugin.'))),
   /** @param {string} scene @param {number} [slot] */
@@ -182,7 +191,7 @@ async function start() {
   Config file:                              ${CONFIG_PATH}
 `);
     if (!network.configured) console.log('  Guests can’t join yet: open the setup wizard to choose how they reach you.\n');
-    network.once('status', () => { if (network.publicUrl) console.log(`  Guest invite link: ${network.publicUrl}/guest/?k=${config.guestKey}\n`); });
+    network.once('status', () => { if (network.publicUrl) console.log(`  Guest invite link: ${network.publicUrl}/guest/?k=${invite.key}\n`); });
   }
 
   const shutdown = async () => { await network.stop(); local.close(); process.exit(0); };

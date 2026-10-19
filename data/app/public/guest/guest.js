@@ -12,6 +12,11 @@ const camBitrate = Math.min(2_500_000, MAX_VIDEO);
 const AS_HOST = param('host') === '1';
 const NAME_KEY = 'studiohost.name';
 const DEV_KEY = 'studiohost.devices';
+// Lets this guest back in after a dropped connection, even once the invite link has changed.
+const TICKET_KEY = 'studiohost.rejoin';
+const storedTicket = () => { try { return sessionStorage.getItem(TICKET_KEY) || undefined; } catch { return undefined; } };
+/** @param {string|null} t */
+const storeTicket = (t) => { try { if (t) sessionStorage.setItem(TICKET_KEY, t); else sessionStorage.removeItem(TICKET_KEY); } catch { /* ignore */ } };
 
 const client = new StudioClient('guest');
 /** @type {any} */ (window).studioHost = { client, get links() { return links; } };
@@ -233,7 +238,8 @@ async function join() {
   $('#join').disabled = true;
   $('#join').textContent = 'Joining…';
   try {
-    await client.join({ name, key: KEY, asHost: AS_HOST });
+    const body = await client.join({ name, key: KEY, ticket: storedTicket(), asHost: AS_HOST });
+    storeTicket(body.rejoin || null);
   } catch (e) {
     $('#join').disabled = false;
     $('#join').textContent = 'Join studio';
@@ -277,7 +283,7 @@ async function join() {
   client.on('state', (m) => onState(m.state));
   client.on('chat', (m) => addChat(m.message));
   client.on('welcome', (m) => { $('#chat-log').replaceChildren(); m.chat.forEach(addChat); });
-  client.on('kicked', () => end('You were removed from the studio', 'The host removed you from this session.'));
+  client.on('kicked', () => { storeTicket(null); end('You were removed from the studio', 'The host removed you from this session.'); });
   client.on('request', (m) => toast(m.what === 'cam' ? 'The host asked you to turn on your camera.' : 'The host asked you to unmute your microphone.', { ms: 7000 }));
   client.on('lost', () => end('Disconnected', 'The connection to the studio was lost. Rejoin to continue.'));
   client.on('reconnecting', () => setConn('reconnecting'));
