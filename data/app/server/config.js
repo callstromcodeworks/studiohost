@@ -27,7 +27,6 @@ export const CONFIG_PATH = join(DATA_DIR, 'config.json');
  * @property {{maxKbps: number, totalKbps: number, codec?: 'auto' | 'h264'}} guestFeed  Caps on the program
  *   video sent back to guests: per guest, and shared by all guests (this machine's upload also carries
  *   the live stream). codec "h264" prefers H.264 even when the browser reports no hardware encoder.
- * @property {{url: string, password: string, sceneName: string, slots: number}} obs
  */
 
 /** @typedef {{urls: string | string[], username?: string, credential?: string}} RTCIceServerLike */
@@ -44,7 +43,6 @@ function defaults() {
     maxGuests: 10,
     output: { width: 1920, height: 1080, fps: 30 },
     guestFeed: { maxKbps: 3000, totalKbps: 12000, codec: 'auto' },
-    obs: { url: 'ws://127.0.0.1:4455', password: '', sceneName: 'Studio Host', slots: 4 },
   };
 }
 
@@ -65,7 +63,6 @@ export function loadConfig() {
     ...fromDisk,
     output: { ...base.output, ...(fromDisk.output || {}) },
     guestFeed: { ...base.guestFeed, ...(fromDisk.guestFeed || {}) },
-    obs: { ...base.obs, ...(fromDisk.obs || {}) },
   };
   if (!existsSync(CONFIG_PATH)) {
     writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2) + '\n');

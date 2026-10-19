@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { ObsClient } from '../data/app/server/obs.js';
+import { ObsClient } from './obs-client.mjs';
 import { computeLayout, REF_W, REF_H } from '../data/app/public/common/render.js';
 
 const require = createRequire(import.meta.url);

@@ -56,7 +56,10 @@ private:
 	static void handleSourceListSignal(void *data, calldata_t *cd);
 	obs_data_array_t *contentSourceNames();
 	void setupScenesForCollectionOnce();
+	bool scenesCreated(const std::string &collection);
+	void markScenesCreated(const std::string &collection);
 	void createScenesNow();
+	void restartServer();
 	void syncWidgets();
 	void showDockFirstRun();
 	void maybeAutoOpenWizard();

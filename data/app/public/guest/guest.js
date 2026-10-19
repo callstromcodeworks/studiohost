@@ -1,7 +1,7 @@
 // Guest page: green room (device check) → studio (backstage / on stage).
 import { StudioClient, param } from '../common/client.js';
 import { manageLinks, applyEncoding } from '../common/peer.js';
-import { $, h, icon, toast, timeOf } from '../common/ui.js';
+import { $, h, icon, toast, appendChat } from '../common/ui.js';
 
 const KEY = param('k') || '';
 // Optional caps on what this guest sends, in kbps (?maxv=600&maxa=24). Useful for guests on
@@ -365,13 +365,8 @@ function onState(st) {
 
 /** @param {any} m */
 function addChat(m) {
-  const log = $('#chat-log');
   const mine = m.fromId === client.id;
-  const priv = m.to !== null;
-  log.append(h(`div.chat-msg${priv ? '.private' : ''}${mine ? '.mine' : ''}`, null,
-    h('div.who', null, `${m.from}${priv ? (m.to === 'host' ? ' → host' : ' → you') : ''} · ${timeOf(m.ts)}`),
-    h('div', null, m.text)));
-  log.scrollTop = log.scrollHeight;
+  appendChat(m, mine, m.to === null ? '' : m.to === 'host' ? ' → host' : ' → you');
   if (!mine && $('#chat').classList.contains('hidden')) {
     unread++;
     renderChatButton();

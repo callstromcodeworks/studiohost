@@ -4,7 +4,7 @@ import { StudioClient, param } from '../common/client.js';
 import { manageLinks } from '../common/peer.js';
 import { MediaBank } from '../common/media.js';
 import { StageRenderer, initials } from '../common/render.js';
-import { $, h, icon, toast, copy, timeOf } from '../common/ui.js';
+import { $, h, icon, toast, copy, appendChat } from '../common/ui.js';
 
 const client = new StudioClient('host');
 const bank = new MediaBank();
@@ -361,11 +361,8 @@ function renderChatTargets() {
 }
 /** @param {any} m */
 function addChat(m) {
-  const log = $('#chat-log');
   const to = m.to === null ? '' : m.to === 'host' ? ' → producers' : ` → ${state?.participants.find((p) => p.id === m.to)?.name || 'guest'}`;
-  log.append(h(`div.chat-msg${m.to !== null ? '.private' : ''}${m.fromId === client.id ? '.mine' : ''}`, null,
-    h('div.who', null, `${m.from}${to} · ${timeOf(m.ts)}`), h('div', null, m.text)));
-  log.scrollTop = log.scrollHeight;
+  appendChat(m, m.fromId === client.id, to);
   if (currentTab !== 'chat' && m.fromId !== client.id) { unread++; $('#chat-badge').textContent = String(unread); $('#chat-badge').classList.remove('hidden'); }
 }
 

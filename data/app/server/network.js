@@ -14,8 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { randomInt } from 'node:crypto';
-import { X509Certificate } from 'node:crypto';
+import { randomInt, X509Certificate } from 'node:crypto';
 import { join } from 'node:path';
 import { createSelfSignedCert, localIPv4s } from './certs.js';
 import { AcmeClient, LETS_ENCRYPT, newKeyPem, renewalTime } from './acme.js';
@@ -168,6 +167,10 @@ export class NetworkManager extends EventEmitter {
 
   serviceUrl() { return env.STUDIOHOST_DNS_SERVICE || this.settings.auto.service || DEFAULT_HOSTNAME_SERVICE; }
 
+  hostnameService() {
+    return new HostnameService({ url: this.serviceUrl(), ca: env.STUDIOHOST_DNS_SERVICE_CA ? readFileSync(env.STUDIOHOST_DNS_SERVICE_CA, 'utf8') : undefined });
+  }
+
   /** @param {string} id @param {string} label */
   addStep(id, label) { this.steps.push({ id, label, state: 'pending', detail: '' }); }
   /** @param {string} id @param {StepState} state @param {string} [detail] */
@@ -318,7 +321,7 @@ export class NetworkManager extends EventEmitter {
   /** @param {number} run */
   async runAuto(run) {
     const s = this.settings;
-    const svc = new HostnameService({ url: this.serviceUrl(), ca: env.STUDIOHOST_DNS_SERVICE_CA ? readFileSync(env.STUDIOHOST_DNS_SERVICE_CA, 'utf8') : undefined });
+    const svc = this.hostnameService();
     this.addStep('port', 'Open a port on your router');
     this.addStep('name', 'Get your studio’s web address');
     this.addStep('certificate', 'Get a security certificate');
@@ -442,8 +445,7 @@ export class NetworkManager extends EventEmitter {
   /** Runs the reachability test again (from the wizard / Setup tab). */
   async recheck() {
     if (this.settings.mode !== 'auto' || !this.settings.auto.name) return this.status();
-    const svc = new HostnameService({ url: this.serviceUrl(), ca: env.STUDIOHOST_DNS_SERVICE_CA ? readFileSync(env.STUDIOHOST_DNS_SERVICE_CA, 'utf8') : undefined });
-    await this.checkReach(svc, this.runId);
+    await this.checkReach(this.hostnameService(), this.runId);
     return this.status();
   }
 

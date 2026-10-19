@@ -52,6 +52,7 @@ export function createHandler(ctx, localListener) {
       if (path.startsWith('/assets/')) return serveFile(req, res, UPLOAD_DIR, path.slice('/assets/'.length));
       return serveFile(req, res, PUBLIC_DIR, path.slice(1));
     } catch (err) {
+      if (err.status) return json(res, err.status, { error: err.message });
       console.error('[http]', req.method, path, err);
       if (!res.headersSent) json(res, 500, { error: 'internal error' });
       else res.end();
@@ -280,12 +281,13 @@ function readJson(req) {
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_JSON) { reject(new Error('body too large')); req.destroy(); return; }
+      if (size > MAX_JSON) { reject(Object.assign(new Error('body too large'), { status: 413 })); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) || {}); } catch { resolve({}); }
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) || {}); }
+      catch { reject(Object.assign(new Error('the request body is not valid JSON'), { status: 400 })); }
     });
     req.on('error', reject);
   });

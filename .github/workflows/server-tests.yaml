@@ -17,6 +17,10 @@ jobs:
           cache: false
       - name: Build Pebble (test certificate authority)
         run: .github/scripts/build-pebble "${RUNNER_TEMP}/pebble" >> "$GITHUB_ENV"
+      - name: Type check (server)
+        run: |
+          npm install --no-save --silent typescript@5 @types/node@22
+          npm run typecheck
       - name: Unit, API and network setup tests
         run: npm test
       - name: Browser tests (studio and setup wizard)

@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // @ts-check
 // Studio Host server. Normally started by the Studio Host OBS plugin (with --managed),
-// which talks to it over stdin/stdout. It can also run on its own (`npm start`),
-// in which case OBS integration falls back to obs-websocket.
+// which talks to it over stdin/stdout. It can also run on its own (`npm start`) for
+// development and tests, without the OBS features.
 import http from 'node:http';
 import { CONFIG_PATH, DATA_DIR, MANAGED, loadConfig, saveConfigPatch } from './config.js';
 import { createHandler, createUpgradeHandler } from './http.js';
-import { setupObs } from './obs.js';
 import { PluginChannel } from './ipc.js';
 import { Studio } from './studio.js';
 import { NetworkManager, defaultNetworkSettings, validateSettings } from './network.js';
@@ -128,7 +127,7 @@ function configSave(body) {
 const ctx = {
   studio, config, links, configView, configSave,
   managed: MANAGED,
-  obsSetup: () => (channel ? channel.request('setupScenes') : setupObs(config, studio.studio.slots)),
+  obsSetup: () => (channel ? channel.request('setupScenes') : Promise.reject(new Error('Creating scenes needs the Studio Host OBS plugin.'))),
   /** @param {string} scene @param {number} [slot] */
   obsScene: (scene, slot) => {
     if (!channel) return Promise.reject(new Error('Scene switching needs the Studio Host OBS plugin.'));
@@ -151,13 +150,7 @@ const ctx = {
 };
 guestHandler = createHandler(ctx, false);
 
-if (process.argv.includes('--setup-obs')) {
-  setupObs(config, studio.studio.slots)
-    .then((msg) => { console.log(msg); process.exit(0); })
-    .catch((err) => { console.error(err.message); process.exit(1); });
-} else {
-  start();
-}
+start();
 
 async function start() {
   // Local listener: OBS sources, the dock and the setup wizard load from here (no TLS on localhost).

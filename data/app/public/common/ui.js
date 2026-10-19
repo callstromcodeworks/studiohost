@@ -56,6 +56,17 @@ export function escapeHtml(s) {
 /** @param {number} ts */
 export const timeOf = (ts) => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+/**
+ * Appends a chat message to the page's #chat-log and scrolls to it.
+ * @param {any} m @param {boolean} mine @param {string} recipient e.g. ' → host', or '' for everyone
+ */
+export function appendChat(m, mine, recipient) {
+  const log = $('#chat-log');
+  log.append(h(`div.chat-msg${m.to !== null ? '.private' : ''}${mine ? '.mine' : ''}`, null,
+    h('div.who', null, `${m.from}${recipient} · ${timeOf(m.ts)}`), h('div', null, m.text)));
+  log.scrollTop = log.scrollHeight;
+}
+
 // Simple 24x24 icons drawn for this project.
 const P = {
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zm-7 9h2a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.92V21h-2v-2.08A7 7 0 0 1 5 12z',

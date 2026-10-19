@@ -4,7 +4,7 @@ A remote guest studio built into OBS. Guests join from a browser link with no in
 
 By Callstrom Code Works.
 
-> **Status: v0.2, early.** CI builds the plugin for Windows, macOS and Linux. On Linux, CI also installs it into a real OBS (under a virtual display, with browser hardware acceleration off) and checks the whole path: the plugin starts the server and creates the scenes and sources; four guests join on simulated uplinks from 100 kbps to uncapped; their video and audio reach the studio within each cap; program audio reaches the OBS mixer; and every layout — with guests hidden, with an OBS source as content, and with a guest's screen share as content — is checked pixel by pixel in OBS's own rendered frame. It has not yet been tried by hand on Windows or macOS, or with browser hardware acceleration on — please report what you find.
+> **Status: v0.5, early.** CI builds the plugin for Windows, macOS and Linux. On Linux, CI also installs it into a real OBS (under a virtual display, with browser hardware acceleration off) and checks the whole path: the plugin starts the server and creates the scenes and sources; four guests join on simulated uplinks from 100 kbps to uncapped; their video and audio reach the studio within each cap; program audio reaches the OBS mixer; and every layout — with guests hidden, with an OBS source as content, and with a guest's screen share as content — is checked pixel by pixel in OBS's own rendered frame. It has not yet been tried by hand on Windows or macOS, or with browser hardware acceleration on — please report what you find.
 
 ## What you get in OBS
 

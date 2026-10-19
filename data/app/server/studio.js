@@ -114,7 +114,6 @@ export class Studio {
     this.onFeedWanted = null;
     this.feedOn = false;
     this.studio = defaultStudio();
-    this.studio.slots = config.obs.slots || this.studio.slots;
     this.load();
     this.saveTimer = /** @type {NodeJS.Timeout|null} */ (null);
   }
@@ -340,7 +339,6 @@ export class Studio {
   }
 
   // ---- WebRTC link brokering -------------------------------------------
-  /** Recomputes which peer connections should exist and creates/drops links to match. */
   /** The participant whose screen the feature output shows: the featured one, else the first sharer. */
   screenTarget() {
     if (this.featuredScreen && this.participants.get(this.featuredScreen)?.screen) return this.featuredScreen;
@@ -348,6 +346,7 @@ export class Studio {
     return sharers[0]?.id || null;
   }
 
+  /** Recomputes which peer connections should exist and creates/drops links to match. */
   relink() {
     /** @type {Map<string, {a: string, b: string, purpose: LinkPurpose}>} */
     const wanted = new Map();
