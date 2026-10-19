@@ -21,6 +21,7 @@ export const BLUR_FILES = {
 
 // The model looks at a 256x144 picture; the mask it returns is scaled up to the camera's size.
 const MASK_W = 256, MASK_H = 144;
+const SEGMENT_HZ = 15;
 
 const generatorPath = () => 'MediaStreamTrackProcessor' in window && 'MediaStreamTrackGenerator' in window && 'VideoFrame' in window;
 
@@ -165,9 +166,17 @@ export class BackgroundBlur {
       this.tiny.width = Math.max(1, Math.round(w / 24));
       this.tiny.height = Math.max(1, Math.round(h / 24));
     }
-    // Find the person.
+    // Find the person: at most SEGMENT_HZ times a second (the model is most of the work; a
+    // person moves little between two frames, so the frames in between reuse the last mask).
+    const now = performance.now();
+    if (!this.hasMask || now - this.lastTs >= 1000 / SEGMENT_HZ) this.segment(src, now);
+    this.draw(ctx, src, w, h);
+  }
+
+  /** Runs the model on one frame and keeps its mask. @param {CanvasImageSource} src @param {number} now */
+  segment(src, now) {
     this.smallCtx.drawImage(src, 0, 0, MASK_W, MASK_H);
-    const ts = Math.max(performance.now(), this.lastTs + 1);
+    const ts = Math.max(now, this.lastTs + 1);
     this.lastTs = ts;
     this.segmenter.segmentForVideo(this.small, ts, (/** @type {any} */ result) => {
       const m = result.confidenceMasks?.[this.maskIndex];
@@ -178,6 +187,13 @@ export class BackgroundBlur {
       this.maskCtx.putImageData(this.maskData, 0, 0);
       this.hasMask = true;
     });
+  }
+
+  /**
+   * Draws the frame blurred, with the person cut out by the mask drawn sharp on top.
+   * @param {OffscreenCanvasRenderingContext2D|CanvasRenderingContext2D} ctx @param {CanvasImageSource} src @param {number} w @param {number} h
+   */
+  draw(ctx, src, w, h) {
     // The background, blurred.
     ctx.globalCompositeOperation = 'copy';
     if (this.canFilter) {

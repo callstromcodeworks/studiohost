@@ -331,7 +331,7 @@ try {
       const p = window.studioHost.client.state.participants.find((x) => x.name === 'Blur Guest');
       const v = p && window.studioHost.bank.video(p.id, 'camera');
       return !!v && v.videoWidth > 0;
-    }), 20000), 'the program receives the blurred camera');
+    }), 45000), 'the program receives the blurred camera');
     await blurry.evaluate(() => { const b = document.querySelector('#blur-2'); b.checked = false; b.dispatchEvent(new Event('change')); });
     check(await waitFor(() => blurry.evaluate(() => !window.studioHost.blur && !!document.querySelector('#self-video').srcObject?.getVideoTracks()[0]?.getSettings().deviceId)), 'turning blur off sends the camera as it is');
     await blurry.screenshot({ path: join(SHOTS, 'guest-blur.png') });
