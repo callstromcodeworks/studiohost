@@ -29,6 +29,8 @@
     <label class="field">Camera<select id="cam-select"></select></label>
     <label class="field">Microphone<select id="mic-select"></select></label>
     <label class="field">Your name (shown on screen)<input type="text" id="name" maxlength="40" autocomplete="name" placeholder="Your name"></label>
+    <label class="field">Title (optional, shown under your name)<input type="text" id="headline" maxlength="60" autocomplete="organization-title" placeholder="e.g. Founder, Acme Co."></label>
+    <label class="check" id="blur-row"><input type="checkbox" id="blur"> Blur my background</label>
     <div id="lobby-error" class="error-box hidden"></div>
     <button class="btn primary big" id="join">Join studio</button>
   </div>
@@ -76,6 +78,8 @@
       <label class="field">Microphone<select id="mic-select-2"></select></label>
       <label class="field">Speaker<select id="spk-select"></select></label>
       <label class="field">Display name<input type="text" id="name-2" maxlength="40"></label>
+      <label class="field">Title (shown under your name)<input type="text" id="headline-2" maxlength="60" placeholder="e.g. Founder, Acme Co."></label>
+      <label class="check" id="blur-row-2"><input type="checkbox" id="blur-2"> Blur my background</label>
       <div class="row"><span class="grow"></span><button class="btn primary">Done</button></div>
     </form>
   </dialog>

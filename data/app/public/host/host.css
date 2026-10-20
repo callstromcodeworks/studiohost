@@ -35,6 +35,8 @@ body { min-height: 100vh; }
 .thumb .screen-thumb { position: absolute; right: 3px; bottom: 3px; width: 40%; aspect-ratio: 16 / 9; border: 1px solid var(--accent); border-radius: 3px; background: #000; object-fit: contain; }
 .p-info { display: grid; gap: 6px; min-width: 0; align-content: start; }
 .p-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-headline { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -4px; }
+.p-headline:empty { display: none; }
 .p-flags { display: flex; gap: 4px; flex-wrap: wrap; }
 .flag { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
 .flag.bad { color: #FFB4AE; border-color: #7A2522; }
@@ -70,3 +72,10 @@ body { min-height: 100vh; }
 .obs-bar { padding: 10px; display: grid; gap: 8px; }
 .obs-bar .btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .section-title { font-size: 13px; margin-top: 14px; }
+.presets { padding: 10px; display: grid; gap: 8px; }
+.preset { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.preset .btn { border: 0; border-radius: 0; }
+.preset .recall { font-weight: 500; }
+.preset .btn + .btn { border-left: 1px solid var(--line); }
+.timer-now { display: grid; gap: 8px; padding: 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--panel-2); margin-bottom: 8px; }
+.timer-value { font-size: 22px; font-variant-numeric: tabular-nums; }

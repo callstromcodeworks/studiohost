@@ -14,13 +14,16 @@
   #avatar { position: absolute; inset: 0; display: none; place-items: center; background: #14161A; }
   #avatar span { width: 36vh; height: 36vh; border-radius: 50%; display: grid; place-items: center; font: 500 14vh Roboto, system-ui, sans-serif; }
   #name { position: absolute; left: 2.5vh; bottom: 2.5vh; padding: .5em 1em; border-radius: 999px; font: 500 4.5vh Roboto, system-ui, sans-serif; display: none; }
+  #name.two { border-radius: .85em; }
+  #headline { font-size: .68em; font-weight: 400; opacity: .85; }
+  #headline:empty { display: none; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <video id="video" autoplay playsinline></video>
   <div id="avatar"><span id="initials"></span></div>
-  <div id="name"></div>
+  <div id="name"><div id="name-text"></div><div id="headline"></div></div>
 </div>
 <script type="module" src="slot.js"></script>
 </body>

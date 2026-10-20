@@ -28,14 +28,15 @@ namespace studiohost {
 namespace {
 
 constexpr int MAX_SLOTS = 16;
+constexpr int PRESET_HOTKEYS = 9;
 
-// A localized description with "%1" replaced by the slot number.
-std::string describe(const char *key, int slot)
+// A localized description with "%1" replaced by the slot (or preset) number.
+std::string describe(const char *key, int number)
 {
 	std::string text = obs_module_text(key);
 	size_t at = text.find("%1");
 	if (at != std::string::npos)
-		text.replace(at, 2, std::to_string(slot));
+		text.replace(at, 2, std::to_string(number));
 	return text;
 }
 
@@ -50,6 +51,9 @@ StudioHotkeys::StudioHotkeys(ServerProcess *server, obs_data_t *pluginConfig, QO
 	add("studiohost.hide_banner", obs_module_text("Hotkey.HideBanner"), "hideBanner", 0);
 	add("studiohost.toggle_ticker", obs_module_text("Hotkey.Ticker"), "ticker", 0);
 	add("studiohost.next_layout", obs_module_text("Hotkey.NextLayout"), "nextLayout", 0);
+	add("studiohost.timer_pause", obs_module_text("Hotkey.Timer"), "timer", 0);
+	for (int n = 1; n <= PRESET_HOTKEYS; n++)
+		add("studiohost.preset_" + std::to_string(n), describe("Hotkey.Preset", n), "preset", n);
 }
 
 StudioHotkeys::~StudioHotkeys()

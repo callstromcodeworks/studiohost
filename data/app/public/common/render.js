@@ -7,6 +7,7 @@ const MARGIN = 48;
 const GAP = 16;
 const TICKER_H = 60;
 const BANNER = { size: 40, lineH: 52, padX: 32, padY: 20 };
+const TIMER = { size: 64, labelSize: 26, padX: 32, padY: 14 };
 
 /**
  * @typedef {{x: number, y: number, w: number, h: number}} Rect
@@ -156,6 +157,13 @@ export function obsContentRect(state) {
   return t ? { source: /** @type {string} */ (t.source), rect: t.rect } : null;
 }
 
+/** Seconds as "m:ss", or "h:mm:ss" from an hour up. @param {number} secs */
+export function formatDuration(secs) {
+  const hh = Math.floor(secs / 3600), mm = Math.floor((secs % 3600) / 60), ss = secs % 60;
+  const two = (/** @type {number} */ n) => String(n).padStart(2, '0');
+  return hh ? `${hh}:${two(mm)}:${two(ss)}` : `${mm}:${two(ss)}`;
+}
+
 /** @param {string} name */
 export function initials(name) {
   const parts = String(name || '?').trim().split(/\s+/).filter(Boolean);
@@ -193,11 +201,15 @@ export class StageRenderer {
     this.running = false;
     /** Called after each frame is drawn. @type {(() => void)|null} */
     this.afterDraw = null;
+    /** Server clock minus this page's clock, in ms. */
+    this.clockOffset = 0;
   }
 
   /** @param {any} state */
   setState(state) {
     this.state = state;
+    // The timer runs on the server's clock (this page may be on another device).
+    if (typeof state.now === 'number') this.clockOffset = state.now - Date.now();
     const tiles = computeLayout(state);
     const keys = new Set(tiles.map((t) => t.key));
     for (const t of tiles) {
@@ -258,9 +270,12 @@ export class StageRenderer {
     const logo = this.image(brand.logo);
     const logoBox = logo ? this.logoRect(logo, brand) : null;
     const bannerBox = banner ? this.layoutBanner(banner.text, brand, st.studio.bannerPosition, tickerH, logoBox) : null;
+    const timer = st.studio.timer;
+    const timerBox = timer ? this.layoutTimer(timer, brand, st.studio.timerPosition, tickerH, [logoBox, bannerBox]) : null;
     /** @type {Rect[]} */
     this.overlays = [];
     if (bannerBox) this.overlays.push(bannerBox);
+    if (timerBox) this.overlays.push(timerBox);
     if (ticker) this.overlays.push({ x: 0, y: REF_H - TICKER_H, w: REF_W, h: TICKER_H });
 
     // Animate tiles toward their targets.
@@ -304,6 +319,7 @@ export class StageRenderer {
     if (logo && logoBox) ctx.drawImage(logo, logoBox.x, logoBox.y, logoBox.w, logoBox.h);
 
     if (bannerBox) this.drawBanner(bannerBox, brand);
+    if (timerBox) this.drawTimer(timerBox, brand);
     if (ticker) this.drawTicker(ticker.text, brand, dt, st.studio.tickerSpeed || 140, st.studio.tickerRepeat !== false);
     else this.tickerX = 0;
 
@@ -345,26 +361,39 @@ export class StageRenderer {
       ctx.fillText(initials(p.name), r.x + r.w / 2, r.y + r.h / 2 + 1);
     }
     ctx.restore();
-    if (showNames && brand.nameStyle !== 'none' && tile.kind === 'camera') this.drawName(p.name, r, brand, !!tile.small, !!tile.nameRight);
+    if (showNames && brand.nameStyle !== 'none' && tile.kind === 'camera') this.drawName(p.name, r, brand, !!tile.small, !!tile.nameRight, p.headline || '');
   }
 
   /**
    * Draws a guest's name tag in the tile's bottom corner: bottom left, or bottom right when
-   * `right` (guests to the right of the content, so the tag sits on their outer edge).
+   * `right` (guests to the right of the content, so the tag sits on their outer edge). A
+   * headline (e.g. "CEO, Acme") goes on a smaller second line under the name.
    * @param {string} name @param {Rect} r @param {any} brand @param {boolean} small @param {boolean} [right]
+   * @param {string} [headline]
    */
-  drawName(name, r, brand, small, right = false) {
+  drawName(name, r, brand, small, right = false, headline = '') {
     const ctx = this.ctx;
     const style = brand.nameStyle;
     const size = Math.max(16, Math.min(30, r.h * (small ? 0.1 : 0.055)));
-    ctx.font = `500 ${size}px ${fontStack(brand.font)}`;
+    const subSize = Math.max(12, size * 0.68);
+    const font = fontStack(brand.font);
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    const padX = size * 0.6, h = size * 1.7;
+    const padX = size * 0.6, padY = size * 0.35;
     const bar = style === 'accent' ? Math.max(4, size * 0.25) : 0;
-    const text = fitText(ctx, name, r.w - 2 * padX - bar - 24);
-    const textW = ctx.measureText(text).width;
+    const maxW = r.w - 2 * padX - bar - 24;
+    ctx.font = `500 ${size}px ${font}`;
+    const text = fitText(ctx, name, maxW);
+    const nameW = ctx.measureText(text).width;
+    ctx.font = `400 ${subSize}px ${font}`;
+    const sub = headline ? fitText(ctx, headline, maxW) : '';
+    const subW = sub ? ctx.measureText(sub).width : 0;
+    const textW = Math.max(nameW, subW);
     const w = textW + 2 * padX + bar;
+    const h = sub ? 2 * padY + size * 1.15 + subSize : size * 1.7;
+    const nameY = sub ? padY + size * 0.5 : h / 2; // line centers, from the top of the tag
+    const subY = padY + size * 1.15 + subSize * 0.5;
+    const radius = Math.min(h / 2, size * 0.85);
     const inset = style === 'block' ? 0 : size * 0.5;
     const x = right ? r.x + r.w - inset - w : r.x + inset;
     let y = r.y + r.h - inset - h;
@@ -377,10 +406,20 @@ export class StageRenderer {
       y = hit.y - h - size * 0.5;
     }
     if (y < r.y + inset || (this.overlays || []).some((o) => intersects(o, tag()))) y = r.y + inset;
+    /** Writes the name and headline, starting at `left` (or ending at `rightEdge`). @param {string} color @param {number} left @param {number} [rightEdge] */
+    const lines = (color, left, rightEdge) => {
+      ctx.fillStyle = color;
+      ctx.font = `500 ${size}px ${font}`;
+      ctx.fillText(text, rightEdge === undefined ? left : rightEdge - nameW, y + nameY + 1);
+      if (!sub) return;
+      ctx.globalAlpha *= 0.85;
+      ctx.font = `400 ${subSize}px ${font}`;
+      ctx.fillText(sub, rightEdge === undefined ? left : rightEdge - subW, y + subY + 1);
+      ctx.globalAlpha /= 0.85;
+    };
     if (style === 'minimal') {
       ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = 8;
-      ctx.fillStyle = '#fff';
-      ctx.fillText(text, right ? x + w - padX * 0.5 - textW : x + padX * 0.5, y + h / 2);
+      if (right) lines('#fff', 0, x + w - padX * 0.5); else lines('#fff', x + padX * 0.5);
       ctx.shadowBlur = 0;
       return;
     }
@@ -389,7 +428,7 @@ export class StageRenderer {
       // the tag's outer side.
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
       if (style === 'outline') {
-        roundRect(ctx, { x, y, w, h }, h / 2); ctx.fill();
+        roundRect(ctx, { x, y, w, h }, radius); ctx.fill();
         ctx.lineWidth = Math.max(2, size * 0.1);
         ctx.strokeStyle = brand.color;
         ctx.stroke();
@@ -400,15 +439,13 @@ export class StageRenderer {
         ctx.fillRect(right ? x + w - bar : x, y, bar, h);
         ctx.restore();
       }
-      ctx.fillStyle = '#fff';
-      ctx.fillText(text, x + padX + (right ? 0 : bar), y + h / 2 + 1);
+      lines('#fff', x + padX + (right ? 0 : bar));
       return;
     }
     ctx.fillStyle = brand.color;
-    if (style === 'bubble') { roundRect(ctx, { x, y, w, h }, h / 2); ctx.fill(); }
+    if (style === 'bubble') { roundRect(ctx, { x, y, w, h }, radius); ctx.fill(); }
     else { ctx.save(); roundRect(ctx, r, r.w >= REF_W ? 0 : 12); ctx.clip(); ctx.fillRect(x, y, w, h); ctx.restore(); }
-    ctx.fillStyle = brand.textColor;
-    ctx.fillText(text, x + padX, y + h / 2 + 1);
+    lines(brand.textColor, x + padX);
   }
 
   /** Where the logo is drawn. @param {HTMLImageElement} logo @param {any} brand @returns {Rect} */
@@ -451,6 +488,69 @@ export class StageRenderer {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     lines.forEach((l, i) => ctx.fillText(l, x + padX, y + padY + lineH * (i + 0.5) + 1));
+  }
+
+  /** What the timer shows now, e.g. "4:59" or "1:02:03". @param {any} timer */
+  timerText(timer) {
+    const now = (timer.pausedAt ?? Date.now() + this.clockOffset);
+    // A countdown rounds up, so it reaches 0:00 just as time runs out.
+    const secs = timer.mode === 'down' ? Math.max(0, Math.ceil((timer.endsAt - now) / 1000)) : Math.max(0, Math.floor((now - timer.startedAt) / 1000));
+    return formatDuration(secs);
+  }
+
+  /**
+   * Where the timer goes: its own corner or edge (top center by default), moved past the logo
+   * and the banner if they are there, and above the ticker at the bottom.
+   * @param {any} timer @param {any} brand @param {string} [position] @param {number} [tickerH] @param {(Rect|null)[]} [avoid]
+   * @returns {Rect & {text: string, label: string, digitW: number}}
+   */
+  layoutTimer(timer, brand, position = 'top-center', tickerH = 0, avoid = []) {
+    const ctx = this.ctx;
+    const { size, labelSize, padX, padY } = TIMER;
+    const text = this.timerText(timer);
+    // Digits get equal-width cells so the box doesn't twitch as they change.
+    ctx.font = `700 ${size}px ${fontStack(brand.font)}`;
+    const digitW = Math.max(...'0123456789'.split('').map((d) => ctx.measureText(d).width));
+    const textW = [...text].reduce((sum, ch) => sum + (ch === ':' ? ctx.measureText(':').width : digitW), 0);
+    ctx.font = `500 ${labelSize}px ${fontStack(brand.font)}`;
+    const label = timer.label ? fitText(ctx, timer.label, REF_W * 0.4) : '';
+    const w = Math.max(textW, label ? ctx.measureText(label).width : 0) + padX * 2;
+    const h = size * 1.1 + (label ? labelSize * 1.3 : 0) + padY * 2;
+    const top = position.startsWith('top');
+    const x = position.endsWith('right') ? REF_W - MARGIN - w : position.endsWith('center') ? (REF_W - w) / 2 : MARGIN;
+    let y = top ? MARGIN : REF_H - MARGIN - tickerH - h;
+    for (const box of avoid) {
+      if (box && intersects(box, { x, y, w, h })) y = top ? box.y + box.h + GAP : box.y - GAP - h;
+    }
+    return { x, y, w, h, text, label, digitW };
+  }
+
+  /** @param {Rect & {text: string, label: string, digitW: number}} box @param {any} brand */
+  drawTimer(box, brand) {
+    const ctx = this.ctx;
+    const { size, labelSize, padY } = TIMER;
+    const { x, y, w, h, text, label, digitW } = box;
+    ctx.fillStyle = brand.color;
+    roundRect(ctx, { x, y, w, h }, 10);
+    ctx.fill();
+    ctx.fillStyle = brand.textColor;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    let cy = y + padY;
+    if (label) {
+      ctx.font = `500 ${labelSize}px ${fontStack(brand.font)}`;
+      ctx.fillText(label, x + w / 2, cy + labelSize * 0.65);
+      cy += labelSize * 1.3;
+    }
+    ctx.font = `700 ${size}px ${fontStack(brand.font)}`;
+    const colonW = ctx.measureText(':').width;
+    const textW = [...text].reduce((sum, ch) => sum + (ch === ':' ? colonW : digitW), 0);
+    let cx = x + (w - textW) / 2;
+    for (const ch of text) {
+      const cw = ch === ':' ? colonW : digitW;
+      ctx.fillText(ch, cx + cw / 2, cy + size * 0.55 + 1);
+      cx += cw;
+    }
   }
 
   /**
