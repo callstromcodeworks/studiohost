@@ -35,15 +35,18 @@ runs:
         CCACHE_DIR: ${{ inputs.workingDirectory }}/.ccache
         CODESIGN_IDENT: ${{ inputs.codesignIdent }}
         CODESIGN_TEAM: ${{ inputs.codesignTeam }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_CODESIGN: ${{ inputs.codesign }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.workingDirectory }}
       run: |
         : Run macOS Build
 
-        local -a build_args=(--config ${{ inputs.config }})
+        local -a build_args=(--config $INPUT_CONFIG)
         if (( ${+RUNNER_DEBUG} )) build_args+=(--debug)
 
-        if [[ '${{ inputs.codesign }}' == 'true' ]] build_args+=(--codesign)
+        if [[ "$INPUT_CODESIGN" == 'true' ]] build_args+=(--codesign)
 
-        .github/scripts/build-macos ${build_args} 2>&1 | tee ${{ inputs.workingDirectory }}/build-output.log
+        .github/scripts/build-macos ${build_args} 2>&1 | tee $INPUT_WORKING_DIRECTORY/build-output.log
 
     - name: Install Dependencies 🛍️
       if: runner.os == 'Linux'
@@ -62,20 +65,26 @@ runs:
       working-directory: ${{ inputs.workingDirectory }}
       env:
         CCACHE_DIR: ${{ inputs.workingDirectory }}/.ccache
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.workingDirectory }}
       run: |
         : Run Ubuntu Build
 
         local -a build_args=(
-          --target ubuntu-${{ inputs.target }}
-          --config ${{ inputs.config }}
+          --target ubuntu-$INPUT_TARGET
+          --config $INPUT_CONFIG
         )
         if (( ${+RUNNER_DEBUG} )) build_args+=(--debug)
 
-        .github/scripts/build-ubuntu ${build_args} 2>&1 | tee ${{ inputs.workingDirectory }}/build-output.log
+        .github/scripts/build-ubuntu ${build_args} 2>&1 | tee $INPUT_WORKING_DIRECTORY/build-output.log
 
     - name: Run Windows Build
       if: runner.os == 'Windows'
       shell: pwsh
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_CONFIG: ${{ inputs.config }}
       run: |
         # Run Windows Build
         if ( $Env:RUNNER_DEBUG -ne $null ) {
@@ -83,8 +92,8 @@ runs:
         }
 
         $BuildArgs = @{
-          Target = '${{ inputs.target }}'
-          Configuration = '${{ inputs.config }}'
+          Target = $Env:INPUT_TARGET
+          Configuration = $Env:INPUT_CONFIG
         }
 
         .github/scripts/Build-Windows.ps1 @BuildArgs *>&1 | Tee-Object -FilePath build-output.log
@@ -107,6 +116,8 @@ runs:
       shell: zsh --no-rcs --errexit --pipefail {0}
       env:
         CCACHE_DIR: ${{ inputs.workingDirectory }}/.ccache
+        RUNNER_OS: ${{ runner.os }}
+        INPUT_TARGET: ${{ inputs.target }}
       run: |
         : Create Summary 📊
 
@@ -118,7 +129,7 @@ runs:
           ccache_data=("${(fA)$(ccache -s)}")
         }
 
-        print '### ${{ runner.os }} Ccache Stats (${{ inputs.target }})' >> $GITHUB_STEP_SUMMARY
+        print "### ${RUNNER_OS} Ccache Stats (${INPUT_TARGET})" >> $GITHUB_STEP_SUMMARY
         print '```' >> $GITHUB_STEP_SUMMARY
         for line (${ccache_data}) {
           print ${line} >> $GITHUB_STEP_SUMMARY
