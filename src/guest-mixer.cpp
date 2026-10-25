@@ -169,7 +169,12 @@ void GuestMixer::addStrip(const std::string &id, const std::string &name, double
 		return;
 	// Already in the program through Studio Host Audio: on no track, and not monitored.
 	obs_source_set_audio_mixers(src, 0);
+#if LIBOBS_API_MAJOR_VER >= 33
+	// OBS 33 deprecated monitoring types (and warnings are errors here) for a plain on/off.
+	obs_source_set_monitoring_enabled(src, false);
+#else
 	obs_source_set_monitoring_type(src, OBS_MONITORING_TYPE_NONE);
+#endif
 	signal_handler_t *sh = obs_source_get_signal_handler(src);
 	signal_handler_connect(sh, "volume", volumeChanged, this);
 	signal_handler_connect(sh, "mute", muteChanged, this);
